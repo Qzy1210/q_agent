@@ -1,0 +1,15 @@
+websocket:
+  # WebSocket 服务配置
+  read_buffer_size: 1024
+  write_buffer_size: 1024
+  ping_period: 54s
+  pong_wait: 60s
+  max_message_size: 8192
+  
+  # 连接管理配置
+  max_connections: 10000
+  connection_timeout: 30s
+  
+  # 消息配置
+  message_queue_size: 1000
+  heartbeat_interval: 30s

@@ -1,0 +1,9 @@
+logger:
+  level: debug
+  encoding: console
+  output_paths:
+    - stdout
+    - logs/app.log
+  error_output_paths:
+    - stderr
+    - logs/error.log

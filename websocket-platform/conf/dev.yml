@@ -1,0 +1,10 @@
+app:
+  name: websocket-platform
+  env: dev
+  port: 8080
+  mode: debug
+
+includes:
+  - includes/logger/dev.yml
+  - includes/mysql/dev.yml
+  - includes/websocket/dev.yml

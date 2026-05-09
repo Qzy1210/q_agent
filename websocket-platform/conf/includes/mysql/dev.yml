@@ -1,0 +1,10 @@
+mysql:
+  host: localhost
+  port: 3306
+  database: websocket_platform
+  username: root
+  password: root
+  charset: utf8mb4
+  max_open_conns: 100
+  max_idle_conns: 10
+  conn_max_lifetime: 3600
