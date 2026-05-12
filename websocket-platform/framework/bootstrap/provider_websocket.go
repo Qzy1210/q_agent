@@ -5,9 +5,12 @@ import (
 	"websocket-platform/framework/provider"
 	"websocket-platform/framework/websocket"
 	"websocket-platform/internal/logic"
-	
+
 	"go.uber.org/zap"
 )
+
+// 全局 WebSocket Provider 实例
+var globalWebSocketProvider *WebSocketProvider
 
 // WebSocketProvider WebSocket服务提供者
 type WebSocketProvider struct {
@@ -29,12 +32,12 @@ func (p *WebSocketProvider) Name() string {
 func (p *WebSocketProvider) Init() error {
 	// 创建会话管理器
 	p.sessionManager = logic.NewSessionManager()
-	
+
 	// 初始化数据库表
 	if err := p.sessionManager.InitTables(); err != nil {
 		return err
 	}
-	
+
 	// 创建WebSocket服务器
 	wsConfig := config.WebSocketInstance()
 	p.server = websocket.NewServer(&websocket.WebSocketConfig{
@@ -48,7 +51,10 @@ func (p *WebSocketProvider) Init() error {
 		MessageQueueSize:  wsConfig.MessageQueueSize,
 		HeartbeatInterval: wsConfig.HeartbeatInterval,
 	}, p.sessionManager)
-	
+
+	// 保存全局实例
+	globalWebSocketProvider = p
+
 	zap.L().Info("websocket provider initialized")
 	return nil
 }
@@ -75,4 +81,17 @@ func (p *WebSocketProvider) GetServer() *websocket.Server {
 // GetSessionManager 获取会话管理器
 func (p *WebSocketProvider) GetSessionManager() *logic.SessionManager {
 	return p.sessionManager
+}
+
+// GetWebSocketProvider 获取全局 WebSocket Provider 实例
+func GetWebSocketProvider() *WebSocketProvider {
+	return globalWebSocketProvider
+}
+
+// GetWebSocketServer 获取全局 WebSocket Server 实例
+func GetWebSocketServer() *websocket.Server {
+	if globalWebSocketProvider == nil {
+		return nil
+	}
+	return globalWebSocketProvider.server
 }

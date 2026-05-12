@@ -1,0 +1,26 @@
+# q_agent - AI Agent Learning Framework
+
+# Core dependencies
+typing-extensions>=4.0.0
+
+# LLM clients (optional, install as needed)
+openai>=1.0.0
+anthropic>=0.18.0
+
+# WebSocket client (for Agent integration)
+websockets>=12.0
+
+# Database (optional)
+sqlalchemy>=2.0.0
+pymysql>=1.1.0
+
+# Configuration
+pydantic>=2.0.0
+
+# Testing
+pytest>=7.0.0
+pytest-asyncio>=0.21.0
+
+# API server (optional)
+fastapi>=0.100.0
+uvicorn>=0.23.0

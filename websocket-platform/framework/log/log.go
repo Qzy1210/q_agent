@@ -40,6 +40,8 @@ func InitLogger(level, encoding string, outputPaths, errorOutputPaths []string) 
 		}
 
 		loggerInstance = logger
+		// 替换 zap 全局 logger，使 zap.L() 能获取到我们初始化的 logger
+		zap.ReplaceGlobals(logger)
 	})
 
 	return initErr
@@ -51,6 +53,18 @@ func Logger() *zap.Logger {
 		panic("logger not initialized")
 	}
 	return loggerInstance
+}
+
+func Info(msg string, fields ...zap.Field) {
+	Logger().Info(msg, fields...)
+}
+
+func Error(msg string, fields ...zap.Field) {
+	Logger().Error(msg, fields...)
+}
+
+func Debug(msg string, fields ...zap.Field) {
+	Logger().Debug(msg, fields...)
 }
 
 // Sync 刷新日志缓冲

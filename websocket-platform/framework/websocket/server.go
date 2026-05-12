@@ -6,11 +6,12 @@ import (
 	"net/http"
 	"sync"
 	"time"
-	
+
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
 	"go.uber.org/zap"
 	"websocket-platform/internal/logic"
+	"websocket-platform/internal/model"
 )
 
 // WebSocketConfig WebSocket配置
@@ -72,13 +73,13 @@ func (s *Server) HandleWebSocket(c *gin.Context) {
 	clientID := c.Query("client_id")
 	userID := c.Query("user_id")
 	sessionID := c.Query("session_id")
-	
+
 	// 验证参数
 	if clientID == "" || userID == "" || sessionID == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "missing required parameters"})
 		return
 	}
-	
+
 	// 验证客户端类型
 	var ct ClientType
 	switch clientType {
@@ -90,36 +91,42 @@ func (s *Server) HandleWebSocket(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid client type"})
 		return
 	}
-	
+
+	// 会话恢复检查
+	s.recoverSession(sessionID, userID, clientID)
+
 	// 升级为 WebSocket 连接
 	conn, err := s.upgrader.Upgrade(c.Writer, c.Request, nil)
 	if err != nil {
 		zap.L().Error("failed to upgrade connection", zap.Error(err))
 		return
 	}
-	
+
 	// 创建客户端
 	client := NewClient(clientID, ct, userID, sessionID, conn)
-	
+
 	// 注册客户端
 	if err := s.connManager.Register(client); err != nil {
 		zap.L().Error("failed to register client", zap.Error(err))
 		client.Close()
 		return
 	}
-	
+
 	// 启动读写协程
 	go s.readPump(client)
 	go s.writePump(client)
-	
-	// 发送欢迎消息
+
+	// 发送欢迎消息（包含会话恢复信息）
 	welcomeMsg := NewMessage(MessageTypeStatus, "system", sessionID, &StatusContent{
 		Status:  "connected",
-		Message: fmt.Sprintf("Welcome! Client ID: %s", clientID),
+		Message: fmt.Sprintf("Welcome! Client ID: %s, Session recovered", clientID),
 	})
 	if data, err := welcomeMsg.ToJSON(); err == nil {
 		client.WriteMessage(data)
 	}
+
+	// 同步历史消息（可选，发送最近10条消息）
+	s.syncHistoryMessages(client, sessionID)
 }
 
 // readPump 读取客户端消息
@@ -242,4 +249,102 @@ func (s *Server) GetMessageRouter() *MessageRouter {
 // GetSessionManager 获取会话管理器
 func (s *Server) GetSessionManager() *logic.SessionManager {
 	return s.sessionManager
+}
+
+// recoverSession 恢复会话
+// 检查会话是否存在，如果存在但状态为inactive，则恢复为active
+func (s *Server) recoverSession(sessionID, userID, clientID string) {
+	if s.sessionManager == nil {
+		return
+	}
+
+	// 检查会话是否存在
+	session, err := s.sessionManager.GetSession(sessionID)
+	if err != nil {
+		zap.L().Error("failed to check session for recovery",
+			zap.Error(err),
+			zap.String("session_id", sessionID),
+		)
+		return
+	}
+
+	if session == nil {
+		// 会话不存在，将由 RegisterClient 自动创建
+		zap.L().Debug("session not found, will create new",
+			zap.String("session_id", sessionID),
+			zap.String("user_id", userID),
+		)
+		return
+	}
+
+	// 会话存在但状态为inactive，恢复为active
+	if session.Status == model.SessionStatusInactive {
+		if err := s.sessionManager.UpdateSessionStatus(sessionID, model.SessionStatusActive); err != nil {
+			zap.L().Error("failed to recover session status",
+				zap.Error(err),
+				zap.String("session_id", sessionID),
+			)
+			return
+		}
+		zap.L().Info("session recovered",
+			zap.String("session_id", sessionID),
+			zap.String("client_id", clientID),
+		)
+	}
+}
+
+// syncHistoryMessages 同步历史消息给客户端
+// 发送最近的N条消息给重连的客户端
+func (s *Server) syncHistoryMessages(client *Client, sessionID string) {
+	if s.sessionManager == nil {
+		return
+	}
+
+	// 获取最近10条消息
+	messages, err := s.sessionManager.GetSessionMessages(sessionID, 10, 0)
+	if err != nil {
+		zap.L().Error("failed to get history messages",
+			zap.Error(err),
+			zap.String("session_id", sessionID),
+		)
+		return
+	}
+
+	if len(messages) == 0 {
+		return
+	}
+
+	// 发送历史消息通知
+	historyMsg := NewMessage(MessageTypeStatus, "system", sessionID, &StatusContent{
+		Status:  "history_sync",
+		Message: fmt.Sprintf("Syncing %d history messages", len(messages)),
+	})
+	if data, err := historyMsg.ToJSON(); err == nil {
+		client.WriteMessage(data)
+	}
+
+	// 按时间顺序发送历史消息（从旧到新）
+	for i := len(messages) - 1; i >= 0; i-- {
+		msg := messages[i]
+		// 将存储的消息转换为 WebSocket Message 格式
+		var wsMsg Message
+		if err := wsMsg.FromJSON([]byte(msg.Content)); err != nil {
+			zap.L().Debug("failed to parse history message",
+				zap.Error(err),
+				zap.String("message_id", msg.ID),
+			)
+			continue
+		}
+
+		// 发送消息
+		if data, err := wsMsg.ToJSON(); err == nil {
+			client.WriteMessage(data)
+		}
+	}
+
+	zap.L().Info("history messages synced",
+		zap.String("session_id", sessionID),
+		zap.String("client_id", client.ID),
+		zap.Int("message_count", len(messages)),
+	)
 }

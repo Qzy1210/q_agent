@@ -1,7 +1,7 @@
 app:
   name: websocket-platform
   env: dev
-  port: 8080
+  port: 8088
   mode: debug
 
 includes:

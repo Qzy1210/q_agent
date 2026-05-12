@@ -1,17 +1,12 @@
 """
-Context管理器 - 管理Agent的上下文窗口
+重构后的 ContextManager - 完整的上下文管理系统
 
-上下文管理是Agent系统中的关键组件，负责：
-1. 管理上下文窗口大小（Token限制）
-2. 优化上下文内容（保留重要信息）
-3. 压缩和摘要上下文
-4. 优先级排序
-
-学习重点：
-1. 理解上下文窗口限制
-2. 掌握Token计数方法
-3. 学习上下文优化策略
-4. 实现上下文压缩算法
+职责：
+1. 管理当前会话的活跃消息
+2. Token 限制和优化
+3. 优先级保护机制
+4. 上下文压缩和摘要
+5. 提供构建 LLM prompt 的接口
 """
 
 import re
@@ -21,20 +16,18 @@ from typing import List, Dict, Any, Optional
 
 class ContextManager:
     """
-    Context管理器主类
+    Context管理器 - 负责当前上下文管理
     
-    负责管理Agent的上下文窗口，确保不会超过LLM的Token限制。
-    采用多种策略优化上下文：
-    - 滑动窗口：保留最近N条消息
-    - 重要性排序：保留关键信息
-    - 压缩摘要：对长文本进行总结
+    核心职责：
+    - 管理当前会话的活跃消息（用于构建LLM prompt）
+    - Token限制和优化（确保不超过LLM限制）
+    - 优先级保护（重要消息不被压缩）
+    - 上下文压缩（智能移除不相关内容）
     
-    属性说明：
-        max_tokens (int): 最大Token数量
-        current_tokens (int): 当前Token数量
-        context_window (deque): 上下文窗口（双端队列）
-        priority_messages (dict): 高优先级消息
-        compression_threshold (float): 压缩阈值
+    设计原则：
+    - 这是Agent构建prompt的唯一数据源
+    - 自动管理Token，无需手动干预
+    - 高优先级消息始终保留
     """
     
     def __init__(
@@ -43,7 +36,7 @@ class ContextManager:
         compression_threshold: float = 0.8
     ):
         """
-        初始化Context管理器
+        初始化上下文管理器
         
         参数：
             max_tokens (int): 最大Token数量，默认4000
@@ -53,11 +46,15 @@ class ContextManager:
         self.compression_threshold = compression_threshold
         self.current_tokens = 0
         
-        # 使用双端队列存储上下文
+        # 当前上下文窗口（活跃消息）
         self.context_window = deque()
         
-        # 存储高优先级消息（不会被压缩）
+        # 高优先级消息（不会被压缩）
         self.priority_messages = {}
+        
+        # 当前任务和工具
+        self.current_task = None
+        self.tools = []
         
         # 统计信息
         self.stats = {
@@ -68,10 +65,7 @@ class ContextManager:
         }
         
         print(f"✅ Context管理器初始化完成，最大Token数: {max_tokens}")
-        
-        # 存储当前任务
-        self.current_task = None
-
+    
     def add_message(
         self,
         role: str,
@@ -80,7 +74,7 @@ class ContextManager:
         metadata: Optional[Dict] = None
     ) -> bool:
         """
-        添加消息到上下文窗口
+        添加消息到当前上下文
         
         参数：
             role (str): 消息角色（user/assistant/system）
@@ -90,13 +84,8 @@ class ContextManager:
             
         返回：
             bool: 是否成功添加
-            
-        学习要点：
-        - Token计数
-        - 优先级管理
-        - 窗口溢出处理
         """
-        # 计算Token数（简单估算：中文约1.5字符/token，英文约4字符/token）
+        # 计算Token数
         tokens = self._estimate_tokens(content)
         
         # 创建消息对象
@@ -128,19 +117,46 @@ class ContextManager:
         
         return True
     
+    def set_task(self, task: str):
+        """
+        设置当前任务
+        
+        参数：
+            task (str): 任务描述
+            
+        功能：
+        - 将任务作为高优先级消息添加到上下文
+        - 确保任务信息不会被压缩
+        """
+        # 添加任务作为高优先级系统消息
+        self.add_message(
+            role="system",
+            content=f"当前任务: {task}",
+            priority=1,  # 高优先级
+            metadata={"type": "task"}
+        )
+        self.current_task = task
+        print(f"✅ 已设置任务: {task[:50]}...")
+    
+    def set_tools(self, tools: List[Any]):
+        """
+        设置可用工具
+        
+        参数：
+            tools (List): 工具列表
+        """
+        self.tools = tools
+        print(f"✅ 已设置 {len(tools)} 个工具")
+    
     def get_context(self, include_priority: bool = True) -> List[Dict[str, str]]:
         """
-        获取当前上下文
+        获取当前上下文（用于构建LLM prompt）
         
         参数：
             include_priority (bool): 是否包含高优先级消息
             
         返回：
             List[Dict]: 消息列表，格式为[{"role": ..., "content": ...}]
-            
-        用途：
-        - 构建LLM Prompt
-        - 查看当前上下文
         """
         messages = []
         
@@ -161,16 +177,51 @@ class ContextManager:
         
         return messages
     
+    def get_context_for_llm(self) -> List[Dict[str, str]]:
+        """
+        获取优化后的上下文（专门用于LLM调用）
+        
+        返回：
+            List[Dict]: 优化后的消息列表
+            
+        功能：
+        - 自动检查Token使用率
+        - 如果超过阈值，自动压缩
+        - 返回适合LLM的格式
+        """
+        # 检查是否需要压缩
+        if self.current_tokens / self.max_tokens >= self.compression_threshold:
+            print("🔄 上下文接近上限，自动压缩...")
+            self.compress_context()
+        
+        return self.get_context()
+    
+    def add_interaction(self, action: Any, result: str):
+        """
+        添加交互记录（Agent执行工具后的记录）
+        
+        参数：
+            action: Agent的行动对象
+            result (str): 执行结果
+        """
+        # 添加助手消息
+        self.add_message(
+            role="assistant",
+            content=f"执行 {action.tool_name}: {action.reasoning}"
+        )
+        
+        # 添加系统消息（执行结果）
+        self.add_message(
+            role="system",
+            content=f"执行结果: {result}"
+        )
+    
     def clear_context(self, keep_priority: bool = True):
         """
         清空上下文窗口
         
         参数：
             keep_priority (bool): 是否保留高优先级消息
-            
-        用途：
-        - 开始新会话
-        - 重置上下文
         """
         if not keep_priority:
             self.priority_messages.clear()
@@ -186,6 +237,7 @@ class ContextManager:
         
         返回：
             int: 压缩后节省的Token数
+            
         压缩策略：
         1. 移除最旧的非优先消息
         2. 合并连续的短消息
@@ -201,13 +253,13 @@ class ContextManager:
         for _ in range(remove_count):
             if len(self.context_window) > 0:
                 removed_msg = self.context_window.popleft()
+                self.current_tokens -= removed_msg["tokens"]
                 saved_tokens += removed_msg["tokens"]
                 self.stats["removed_count"] += 1
         
-        # 策略2: 压缩长消息（简化版本）
+        # 策略2: 压缩长消息（保留前半部分）
         for msg in self.context_window:
-            if msg["tokens"] > 500:  # 超过500 token的消息
-                # 简单压缩：只保留前半部分
+            if msg["tokens"] > 200:  # 长消息才压缩
                 compressed_content = msg["content"][:len(msg["content"])//2] + "...[已压缩]"
                 old_tokens = msg["tokens"]
                 msg["content"] = compressed_content
@@ -219,117 +271,19 @@ class ContextManager:
         print(f"✅ 上下文压缩完成，节省 {saved_tokens} tokens")
         return saved_tokens
     
-    def get_stats(self) -> Dict[str, Any]:
-        """
-        获取统计信息
-        
-        返回：
-            dict: 包含各种统计数据
-        """
-        return {
-            **self.stats,
-            "current_tokens": self.current_tokens,
-            "max_tokens": self.max_tokens,
-            "usage_ratio": f"{self.current_tokens / self.max_tokens:.1%}",
-            "window_size": len(self.context_window),
-            "priority_size": len(self.priority_messages)
-        }
-    
-    def set_tools(self, tools: List[Any]):
-        """
-        设置可用工具（供Agent调用）
-        
-        参数：
-            tools (List): 工具列表
-            
-        用途：
-        - Agent集成时设置工具
-        """
-        self.tools = tools
-        print(f"✅ 已设置 {len(tools)} 个工具")
-    
-    def set_task(self, task: str):
-        """
-        设置当前任务（供Agent调用）
-        
-        参数：
-            task (str): 任务描述
-            
-        用途：
-            - 将任务作为高优先级消息添加到上下文
-            - 确保任务信息不会被压缩
-        """
-        # 将任务作为高优先级系统消息添加
-        self.add_message(
-            role="system",
-            content=f"当前任务: {task}",
-            priority=1,  # 高优先级，不会被压缩
-            metadata={"type": "task"}
-        )
-        self.current_task = task
-        print(f"✅ 已设置任务: {task[:50]}...")
-
-    def _estimate_tokens(self, text: str) -> int:
-        """
-        估算文本的Token数量
-        
-        参数：
-            text (str): 文本内容
-        返回：
-            int: 估算的Token数
-        注意：
-        这是简化版本，实际应使用tiktoken等库
-        - 中文：约1.5字符/token
-        - 英文：约4字符/token
-        - 混合文本：取平均值
-        """
-        # 简单估算：平均3字符/token
-        return len(text) // 3 + 1
-    
-    def _make_room(self, needed_tokens: int) -> bool:
-        """
-        为新消息腾出空间
-        
-        参数：
-            needed_tokens (int): 需要的Token数
-        返回：
-            bool: 是否成功腾出空间
-        策略：
-        1. 先尝试压缩
-        2. 如果不够，移除最旧的消息
-        """
-        # 检查是否超过阈值
-        if self.current_tokens / self.max_tokens >= self.compression_threshold:
-            # 尝试压缩
-            saved = self.compress_context()
-            if saved >= needed_tokens:
-                return True
-        
-        # 移除最旧的消息
-        while (self.current_tokens + needed_tokens > self.max_tokens 
-               and len(self.context_window) > 0):
-            removed_msg = self.context_window.popleft()
-            self.current_tokens -= removed_msg["tokens"]
-            self.stats["removed_count"] += 1
-        
-        return self.current_tokens + needed_tokens <= self.max_tokens
-    
     def optimize_for_task(self, task: str):
         """
         根据任务优化上下文
         
         参数：
             task (str): 任务描述
-        策略：
+            
+        功能：
         - 提取任务关键词
         - 保留与任务相关的上下文
         - 移除不相关的信息
-
-        学习要点：
-        - 任务相关性判断
-        - 上下文选择优化
         """
-        # 简化版本：提取任务中的关键词  正则、获取单词、去重
+        # 提取任务中的关键词
         keywords = set(re.findall(r'\w+', task.lower()))
         
         # 重新排序上下文，相关性高的在前
@@ -338,7 +292,7 @@ class ContextManager:
         
         for msg in self.context_window:
             content_keywords = set(re.findall(r'\w+', msg["content"].lower()))
-            # 如果消息包含任务关键词，视为相关 有交集就true
+            # 如果消息包含任务关键词，视为相关
             if keywords & content_keywords:
                 relevant_messages.append(msg)
             else:
@@ -360,52 +314,88 @@ class ContextManager:
                 self.stats["removed_count"] += 1
         
         print(f"✅ 上下文优化完成，保留 {len(self.context_window)} 条相关消息")
+    
+    def get_stats(self) -> Dict[str, Any]:
+        """
+        获取统计信息
+        
+        返回：
+            dict: 包含各种统计数据
+        """
+        return {
+            **self.stats,
+            "current_tokens": self.current_tokens,
+            "max_tokens": self.max_tokens,
+            "usage_ratio": f"{self.current_tokens / self.max_tokens:.1%}",
+            "window_size": len(self.context_window),
+            "priority_size": len(self.priority_messages)
+        }
+    
+    def _estimate_tokens(self, text: str) -> int:
+        """
+        估算文本的Token数量
+        
+        参数：
+            text (str): 文本内容
+        返回：
+            int: 估算的Token数
+        """
+        # 简单估算：平均3字符/token
+        return len(text) // 3 + 1
+    
+    def _make_room(self, needed_tokens: int) -> bool:
+        """
+        为新消息腾出空间
+        
+        参数：
+            needed_tokens (int): 需要的Token数
+        返回：
+            bool: 是否成功腾出空间
+        """
+        # 检查是否超过阈值
+        if self.current_tokens / self.max_tokens >= self.compression_threshold:
+            # 尝试压缩
+            saved = self.compress_context()
+            if saved >= needed_tokens:
+                return True
+        
+        # 移除最旧的消息
+        while (self.current_tokens + needed_tokens > self.max_tokens 
+               and len(self.context_window) > 0):
+            removed_msg = self.context_window.popleft()
+            self.current_tokens -= removed_msg["tokens"]
+            self.stats["removed_count"] += 1
+        
+        return self.current_tokens + needed_tokens <= self.max_tokens
 
 
-# 使用示例
 if __name__ == "__main__":
-    """
-    Context管理器使用示例
-    
-    演示如何使用上下文管理器：
-    1. 添加消息
-    2. 管理上下文窗口
-    3. 压缩和优化上下文
-    """
-    
+    """测试重构后的 ContextManager"""
     print("=" * 60)
-    print("Context管理器使用示例")
+    print("ContextManager 测试")
     print("=" * 60)
     
     # 创建上下文管理器
-    context = ContextManager(max_tokens=1000, compression_threshold=0.7)
+    context = ContextManager(max_tokens=1000)
+    
+    # 设置任务
+    context.set_task("帮我创建一个test.txt文件")
     
     # 添加一些消息
-    context.add_message("system", "你是一个AI助手")
     context.add_message("user", "你好，我想学习AI Agent")
     context.add_message("assistant", "你好！我很乐意帮助你学习AI Agent")
-    context.add_message("user", "什么是Agent Loop？", priority=1)  # 高优先级
-    context.add_message("assistant", "Agent Loop是思考-决策-行动的循环过程")
     
-    # 查看统计信息
-    print("\n上下文统计信息：")
-    stats = context.get_stats()
-    for key, value in stats.items():
-        print(f"  {key}: {value}")
-    
-    # 获取当前上下文
+    # 获取上下文
     print("\n当前上下文：")
     for msg in context.get_context():
         print(f"  [{msg['role']}]: {msg['content'][:50]}...")
     
-    # 测试压缩
-    print("\n测试压缩：")
-    context.compress_context()
-    
-    # 测试优化
-    print("\n测试优化：")
-    context.optimize_for_task("Agent Loop")
+    # 查看统计信息
+    print("\n统计信息：")
+    stats = context.get_stats()
+    for key, value in stats.items():
+        print(f"  {key}: {value}")
     
     print("\n" + "=" * 60)
-    print("示例执行完成！")
+    print("测试完成！")
     print("=" * 60)

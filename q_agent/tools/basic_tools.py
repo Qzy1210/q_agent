@@ -15,7 +15,16 @@
 import os
 import re
 from typing import Dict, Any
-from .base import Tool, ToolResult
+
+# 处理相对导入和直接运行两种情况
+try:
+    from .base import Tool, ToolResult
+except ImportError:
+    # 直接运行时使用绝对导入
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).parent.parent))
+    from tools.base import Tool, ToolResult
 
 
 class FileReadTool(Tool):
@@ -190,7 +199,7 @@ class CalculatorTool(Tool):
             "properties": {
                 "expression": {
                     "type": "string",
-                    "description": "数学表达式"
+                    "description": "数学表达式字符串，例如: '123 + 456'、'2 * 3'、'sqrt(16)'、'2 ** 10'"
                 }
             },
             "required": ["expression"]

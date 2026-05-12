@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">ChatAI</string>
+    <string name="chat_title">聊天</string>
+    <string name="new_session">新会话</string>
+    <string name="send">发送</string>
+    <string name="input_hint">输入消息...</string>
+    <string name="connecting">连接中...</string>
+    <string name="connected">已连接</string>
+    <string name="disconnected">已断开</string>
+    <string name="no_sessions">暂无会话</string>
+    <string name="no_messages">暂无消息</string>
+    <string name="session_id">会话ID: %s</string>
+    <string name="error_connect">连接失败</string>
+    <string name="error_send">发送失败</string>
+</resources>

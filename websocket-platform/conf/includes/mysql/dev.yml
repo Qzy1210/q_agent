@@ -1,9 +1,9 @@
 mysql:
-  host: localhost
+  host: 49.233.105.26
   port: 3306
   database: websocket_platform
   username: root
-  password: root
+  password: qzy123
   charset: utf8mb4
   max_open_conns: 100
   max_idle_conns: 10

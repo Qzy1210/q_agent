@@ -85,19 +85,19 @@ class Config:
         """
         self.config = {
             "database": {
-                "host": "localhost",
+                "host": "49.233.105.26",
                 "port": 3306,
                 "user": "root",
-                "password": "",
+                "password": "qzy123",
                 "database": "q_agent",
                 "charset": "utf8mb4",
                 "pool_size": 5,
                 "max_overflow": 10
             },
             "llm": {
-                "provider": "openai",
-                "model": "gpt-3.5-turbo",
-                "api_key": "",
+                "provider": "custom",
+                "model": "z-ai/glm-5",
+                "api_key": "fk3051499913.iP4sVEMlmwd8EutxA97tNDoTgqVkbpn1d3e2a59c",
                 "temperature": 0.7,
                 "max_tokens": 2000
             },

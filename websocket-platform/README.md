@@ -16,8 +16,10 @@ WebSocket Platform 是一个轻量级的实时通信平台，采用三层架构�
 ✅ **WebSocket 通信**：基于 gorilla/websocket 实现高性能 WebSocket 服务
 ✅ **连接管理**：支持多客户端连接、会话管理、用户映射
 ✅ **消息路由**：自动在 App 和 Agent 之间转发消息
+✅ **会话持久化**：完整的会话、客户端、消息持久化到MySQL
 ✅ **配置管理**：支持 YAML 配置文件、环境变量、多环境配置
 ✅ **日志系统**：基于 Zap 的结构化日志
+✅ **单元测试**：完整的测试覆盖
 
 ## 快速开始
 
@@ -48,7 +50,7 @@ make run
 go run cmd/server/main.go
 ```
 
-服务将在 `http://localhost:8080` 启动。
+服务将在 `http://localhost:8080` 启动，并自动创建数据库表结构。
 
 ### 4. 测试连接
 
@@ -111,6 +113,10 @@ websocket-platform/
 │       ├── logger/dev.yml       # 日志配置
 │       ├── mysql/dev.yml        # 数据库配置
 │       └── websocket/dev.yml    # WebSocket 配置
+├── docs/                        # 文档
+│   ├── migrations/              # 数据库迁移
+│   │   └── 001_init_session_tables.sql
+│   └── session_persistence.md   # 会话持久化文档
 ├── framework/                   # 框架核心
 │   ├── app.go                   # 应用容器
 │   ├── bootstrap/               # Provider 实现
@@ -132,13 +138,103 @@ websocket-platform/
 ├── internal/                    # 业务逻辑
 │   ├── controller/              # 控制器
 │   ├── logic/                   # 业务逻辑
+│   │   ├── session_manager.go   # 会话管理器
+│   │   └── session_manager_test.go
 │   ├── middleware/              # 中间件
 │   ├── model/                   # 数据模型
+│   │   └── session.go           # 会话模型
 │   └── router/                  # 路由注册
 ├── pkg/                         # 公共工具
 ├── go.mod                       # 依赖管理
 └── Makefile                     # 构建脚本
 ```
+
+## 会话持久化
+
+### 数据库表结构
+
+**sessions 表 - 会话信息**
+- `id`: 会话ID
+- `user_id`: 用户ID
+- `status`: 会话状态（active/inactive/closed）
+- `created_at`: 创建时间
+- `updated_at`: 更新时间
+
+**session_clients 表 - 客户端连接**
+- `session_id`: 关联的会话ID
+- `client_id`: 客户端ID
+- `client_type`: 客户端类型（app/agent）
+- `user_id`: 用户ID
+- `status`: 连接状态（online/offline）
+- `connected_at`: 连接时间
+- `disconnected_at`: 断开时间
+
+**messages 表 - 消息记录**
+- `session_id`: 关联的会话ID
+- `type`: 消息类型
+- `from`: 发送者ID
+- `to`: 接收者ID
+- `content`: 消息内容（JSON）
+- `timestamp`: 时间戳
+
+### 核心功能
+
+```go
+// 会话管理
+sessionManager.CreateSession("session1", "user1")
+session, _ := sessionManager.GetSession("session1")
+sessionManager.UpdateSessionStatus("session1", "closed")
+sessions, _ := sessionManager.GetUserSessions("user1")
+
+// 客户端管理
+sessionManager.RegisterClient("session1", "app1", "app", "user1")
+sessionManager.UnregisterClient("app1")
+clients, _ := sessionManager.GetSessionClients("session1")
+
+// 消息管理
+sessionManager.SaveMessage("msg1", "session1", "text", "app1", "agent1", content, timestamp)
+messages, _ := sessionManager.GetSessionMessages("session1", 10, 0)
+```
+
+详细文档请查看：[docs/session_persistence.md](docs/session_persistence.md)
+
+### REST API
+
+会话管理提供以下 HTTP API 端点：
+
+| 端点 | 方法 | 描述 |
+|------|------|------|
+| `/api/sessions` | GET | 获取用户会话列表 (?user_id=xxx) |
+| `/api/sessions` | POST | 创建新会话 |
+| `/api/sessions/:id` | GET | 获取会话详情 |
+| `/api/sessions/:id/messages` | GET | 获取消息历史 (?limit=50&offset=0) |
+| `/api/sessions/:id/clients` | GET | 获取在线客户端 |
+| `/api/sessions/:id/close` | POST | 关闭会话 |
+
+**示例：**
+
+```bash
+# 创建会话
+curl -X POST http://localhost:8080/api/sessions \
+  -H "Content-Type: application/json" \
+  -d '{"user_id":"user1"}'
+
+# 获取用户会话列表
+curl http://localhost:8080/api/sessions?user_id=user1
+
+# 获取消息历史
+curl http://localhost:8080/api/sessions/session1/messages?limit=10
+
+# 关闭会话
+curl -X POST http://localhost:8080/api/sessions/session1/close
+```
+
+### 会话恢复机制
+
+当客户端断线重连时，系统会自动：
+1. 检查会话是否存在
+2. 恢复 inactive 状态的会话为 active
+3. 同步最近 10 条历史消息给客户端
 
 ## 架构设计
 
@@ -293,13 +389,13 @@ make lint
 
 ## 后续计划
 
-- [ ] 完善消息路由逻辑
-- [ ] 添加会话持久化
+- [x] 完善消息路由逻辑
+- [x] 添加会话持久化
+- [x] 编写单元测试
 - [ ] 实现消息队列
 - [ ] 添加认证授权
 - [ ] 实现消息加密
 - [ ] 添加监控指标
-- [ ] 编写单元测试
 - [ ] 添加 API 文档
 
 ## 许可证

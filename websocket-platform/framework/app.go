@@ -7,7 +7,7 @@ import (
 	"os/signal"
 	"syscall"
 	"time"
-	
+
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 	"websocket-platform/framework/bootstrap"
@@ -36,36 +36,30 @@ func (a *App) RegisterProvider(p provider.Provider) {
 
 // Init 初始化所有 Provider
 func (a *App) Init() error {
-	zap.L().Info("initializing providers...")
-	
 	for _, p := range a.providers {
-		zap.L().Info("initializing provider", zap.String("name", p.Name()))
+		// 使用 fmt.Printf 而非 zap.L()，因为日志可能尚未初始化
 		if err := p.Init(); err != nil {
 			return err
 		}
 	}
-	
 	return nil
 }
 
 // Boot 启动所有 Provider
 func (a *App) Boot() error {
-	zap.L().Info("booting providers...")
-	
 	for _, p := range a.providers {
-		zap.L().Info("booting provider", zap.String("name", p.Name()))
+		// 使用 fmt.Printf 而非 zap.L()，因为日志可能尚未初始化
 		if err := p.Boot(); err != nil {
 			return err
 		}
 	}
-	
 	return nil
 }
 
 // Close 关闭所有 Provider（反向顺序）
 func (a *App) Close() error {
 	zap.L().Info("closing providers...")
-	
+
 	// 反向顺序关闭
 	for i := len(a.providers) - 1; i >= 0; i-- {
 		p := a.providers[i]
@@ -74,51 +68,46 @@ func (a *App) Close() error {
 			return err
 		}
 	}
-	
+
 	return nil
 }
 
 // Run 运行应用
 func (a *App) Run() error {
-	// 初始化
-	if err := a.Init(); err != nil {
-		return err
-	}
-	
-	// 启动
+	// 启动所有 Provider（Init 已在外部完成）
 	if err := a.Boot(); err != nil {
 		return err
 	}
-	
+
 	// 启动 HTTP 服务器（非阻塞）
 	go func() {
 		if err := frameworkHTTP.Start(); err != nil && err != http.ErrServerClosed {
 			zap.L().Fatal("failed to start http server", zap.Error(err))
 		}
 	}()
-	
+
 	zap.L().Info("application started")
-	
+
 	// 等待中断信号
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
-	
+
 	zap.L().Info("shutting down application...")
-	
+
 	// 优雅关闭
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	
+
 	if err := frameworkHTTP.Shutdown(ctx); err != nil {
 		zap.L().Error("failed to shutdown http server", zap.Error(err))
 	}
-	
+
 	// 关闭所有 Provider
 	if err := a.Close(); err != nil {
 		return err
 	}
-	
+
 	zap.L().Info("application stopped")
 	return nil
 }
@@ -126,16 +115,16 @@ func (a *App) Run() error {
 // SetupApp 设置应用（快速启动）
 func SetupApp(configPath string) *App {
 	app := NewApp()
-	
+
 	// 注册 Provider（按顺序）
 	app.RegisterProvider(bootstrap.NewConfigProvider(configPath))
 	app.RegisterProvider(bootstrap.NewLoggerProvider())
 	app.RegisterProvider(bootstrap.NewMysqlProvider())
 	app.RegisterProvider(bootstrap.NewWebSocketProvider())
-	
+
 	// 初始化 HTTP
 	appConfig := config.AppInstance()
 	app.engine = frameworkHTTP.InitHTTP(appConfig.Port, appConfig.Mode)
-	
+
 	return app
 }

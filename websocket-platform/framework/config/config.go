@@ -2,6 +2,8 @@ package config
 
 import (
 	"fmt"
+	"path/filepath"
+
 	"github.com/spf13/viper"
 	"sync"
 )
@@ -65,28 +67,36 @@ func InitConfig(configPath string) error {
 		v := viper.New()
 		v.SetConfigFile(configPath)
 		v.SetConfigType("yaml")
-		
+
 		// 读取配置文件
 		if err := v.ReadInConfig(); err != nil {
 			initErr = fmt.Errorf("failed to read config file: %w", err)
 			return
 		}
-		
+
+		// 获取配置文件所在目录，用于解析相对路径
+		configDir := filepath.Dir(configPath)
+
 		// 加载 includes
 		var includes []string
 		if err := v.UnmarshalKey("includes", &includes); err == nil {
 			for _, include := range includes {
-				v.SetConfigFile(include)
+				// 如果是相对路径，转换为绝对路径
+				includePath := include
+				if !filepath.IsAbs(include) {
+					includePath = filepath.Join(configDir, include)
+				}
+				v.SetConfigFile(includePath)
 				if err := v.MergeInConfig(); err != nil {
-					initErr = fmt.Errorf("failed to merge config %s: %w", include, err)
+					initErr = fmt.Errorf("failed to merge config %s: %w", includePath, err)
 					return
 				}
 			}
 		}
-		
+
 		configInstance = &Config{viper: v}
 	})
-	
+
 	return initErr
 }
 
