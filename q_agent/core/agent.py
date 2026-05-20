@@ -189,6 +189,7 @@ class Agent:
         self.current_task = None
         self.iteration_count = 0
         self._tools_called: List[ToolCall] = []  # 执行轨迹：记录调用的工具
+        self._last_action: Optional[AgentAction] = None  # 上一次的 action，用于检测重复调用
 
         # 配置管理
         self.config = config or Config(config_file="../config.json")
@@ -551,6 +552,7 @@ class Agent:
         self.current_task = task
         self.state = AgentState.IDLE
         self.iteration_count = 0
+        self._last_action = None  # 重置上一次 action
 
         # 清空上下文（包括优先级消息，确保新任务从头开始）
         # 注意：memory（长期记忆）保留，但 context（当前上下文）完全清空
@@ -636,6 +638,17 @@ class Agent:
 
         # 3. 解析响应
         action = self._parse_response_to_action(response)
+
+        # 4. 检测重复调用（防止无限循环）
+        if action and self._last_action:
+            if (action.tool_name == self._last_action.tool_name and
+                action.parameters == self._last_action.parameters):
+                print(f"⚠️ 检测到重复调用: {action.tool_name}({action.parameters})")
+                print(f"⚠️ 强制结束任务，避免无限循环")
+                return None  # 强制结束
+
+        # 记录本次 action
+        self._last_action = action
 
         return action
     
@@ -832,6 +845,17 @@ class Agent:
 3. 执行工具并观察结果
 4. 继续下一步或完成任务
 
+【重要规则】何时完成任务：
+- 当工具执行的结果已经完整回答了用户的问题时，必须返回 action="finish"
+- 当你已经获得了用户需要的答案时，必须返回 action="finish"
+- 绝对不要重复执行相同的工具调用
+- 如果上一步工具调用已经解决了问题，直接返回 finish，不要再调用任何工具
+
+【finish 的使用示例】：
+用户问: "15*16等于多少"
+你调用 calculator 得到结果 240
+此时问题已解决，必须返回: {{"action": "finish", "parameters": {{"result": "15*16=240"}}}}
+
 输出格式要求（严格JSON）：
 {{
     "thinking": "你的思考过程",
@@ -1024,6 +1048,7 @@ class Agent:
         from .llm_client import safe_json_loads
 
         print(f"[DEBUG] 原始响应长度: {len(response)}, 类型: {type(response)}")
+        print(f"[DEBUG] LLM原始响应: {response[:500]}")
 
         # 使用通用 JSON 解析工具（自动修复 + 提取）
         data, error = safe_json_loads(response)
@@ -1035,6 +1060,7 @@ class Agent:
 
         try:
             print(f"[DEBUG] 解析成功, action={data.get('action')}")
+            print(f"[DEBUG] 完整解析数据: {data}")
             # 检查是否完成任务
             if data.get("action") == "finish":
                 result = data.get("parameters", {}).get("result", "任务完成")
