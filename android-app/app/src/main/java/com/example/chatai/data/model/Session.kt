@@ -112,6 +112,9 @@ data class MessageData(
     @SerializedName("timestamp")
     val timestamp: Long,
 
+    @SerializedName("client_type")
+    val clientType: Int? = null,
+
     @SerializedName("created_at")
     val createdAt: Date? = null
 )

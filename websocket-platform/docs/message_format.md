@@ -277,6 +277,73 @@ Agent 返回工具执行结果。
 - `UNAUTHORIZED`: 未授权
 - `RATE_LIMIT`: 频率限制
 
+### 8. Agent 结果消息 (agent_result)
+
+Agent 返回的完整执行结果，包含工具调用轨迹、来源等信息。
+
+**消息示例：**
+
+```json
+{
+  "id": "msg_20240507_007",
+  "type": "agent_result",
+  "from": "agent1",
+  "session_id": "session1",
+  "timestamp": 1715088007,
+  "content": {
+    "result": "代码审查完成。发现3个问题...",
+    "success": true,
+    "source": "skill",
+    "skill_name": "code_review",
+    "tools_called": [
+      {
+        "tool_name": "file_read",
+        "parameters": {"file_path": "main.py"},
+        "result": "file content...",
+        "reasoning": "读取目标文件",
+        "success": true
+      },
+      {
+        "tool_name": "search",
+        "parameters": {"pattern": "password"},
+        "result": "found 2 matches",
+        "reasoning": "搜索安全问题",
+        "success": true
+      }
+    ],
+    "iterations": 2,
+    "error": ""
+  }
+}
+```
+
+**Content 字段：**
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `result` | string | 最终结果文本 |
+| `success` | boolean | 执行是否成功 |
+| `source` | string | 结果来源：`skill`、`agent_loop`、`mcp` |
+| `skill_name` | string | Skill 名称（当 source 为 skill 时） |
+| `tools_called` | array | 调用的工具列表 |
+| `iterations` | number | Agent Loop 迭代次数 |
+| `error` | string | 错误信息（失败时） |
+
+**tools_called 数组元素：**
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `tool_name` | string | 工具名称 |
+| `parameters` | object | 调用参数 |
+| `result` | string | 执行结果（截断至 500 字符） |
+| `reasoning` | string | 调用理由 |
+| `success` | boolean | 是否成功 |
+
+**使用场景：**
+- Agent 返回完整执行结果给 App
+- 展示工具调用轨迹，便于调试
+- 区分 Skill 执行和普通 Agent Loop
+
 ## 消息ID生成规则
 
 消息ID格式：`YYYYMMDDHHmmss` + 8位随机字符
@@ -366,7 +433,7 @@ const received = JSON.parse(json);
    - `content` 不为空
 
 2. **类型检查**
-   - `type` 必须是以下之一：`text`, `file`, `tool_call`, `tool_result`, `heartbeat`, `status`, `error`
+   - `type` 必须是以下之一：`text`, `file`, `tool_call`, `tool_result`, `heartbeat`, `status`, `error`, `agent_result`
 
 3. **内容检查**
    - 根据 `type` 验证 `content` 结构
@@ -382,7 +449,7 @@ function validateMessage(message) {
   }
   
   // 检查消息类型
-  const validTypes = ['text', 'file', 'tool_call', 'tool_result', 'heartbeat', 'status', 'error'];
+  const validTypes = ['text', 'file', 'tool_call', 'tool_result', 'heartbeat', 'status', 'error', 'agent_result'];
   if (!validTypes.includes(message.type)) {
     return { valid: false, error: 'Invalid message type' };
   }

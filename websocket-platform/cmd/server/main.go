@@ -39,23 +39,28 @@ func main() {
 		panic("failed to initialize logger: " + err.Error())
 	}
 
-	zap.L().Info("config and logger initialized")
+	zap.L().Info("========================================")
+	zap.L().Info("WebSocket Platform 服务启动中...")
+	zap.L().Info("========================================")
+	zap.L().Info("✓ 配置和日志初始化完成")
 
 	// ===== 第二阶段：启动数据库（WebSocket Init 需要数据库连接） =====
 	if err := mysqlProvider.Boot(); err != nil {
 		zap.L().Fatal("failed to boot mysql", zap.Error(err))
 	}
-	zap.L().Info("mysql provider booted")
+	zap.L().Info("✓ MySQL 数据库连接成功")
 
 	// ===== 第三阶段：初始化剩余 Provider =====
 	if err := wsProvider.Init(); err != nil {
 		zap.L().Fatal("failed to initialize websocket", zap.Error(err))
 	}
+	zap.L().Info("✓ WebSocket 初始化完成")
 
 	// 启动剩余 Provider
 	if err := wsProvider.Boot(); err != nil {
 		zap.L().Fatal("failed to boot websocket", zap.Error(err))
 	}
+	zap.L().Info("✓ WebSocket 启动完成")
 
 	// 初始化 HTTP
 	appConfig := config.AppInstance()
@@ -63,6 +68,16 @@ func main() {
 
 	// 注册路由
 	router.RegisterRoutes(engine)
+
+	zap.L().Info("========================================")
+	zap.L().Info("WebSocket Platform 服务启动成功!",
+		zap.Int("port", appConfig.Port),
+		zap.String("mode", appConfig.Mode),
+	)
+	zap.L().Info("WebSocket 端点:")
+	zap.L().Info("  - App 客户端: ws://localhost:<port>/ws/app?client_id=xxx&user_id=xxx&session_id=xxx")
+	zap.L().Info("  - Agent 客户端: ws://localhost:<port>/ws/agent?client_id=xxx&user_id=xxx&session_id=xxx")
+	zap.L().Info("========================================")
 
 	// 启动应用
 	if err := app.Run(); err != nil {

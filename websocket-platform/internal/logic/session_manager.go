@@ -89,8 +89,9 @@ func (sm *SessionManager) RegisterClient(sessionID, clientID, clientType, userID
 			return err
 		}
 	}
-	
-	// 注册客户端
+
+	// 注册客户端：使用 upsert 操作处理断线重连场景
+	// 如果记录已存在，更新状态为在线；不存在则创建新记录
 	sessionClient := &model.SessionClient{
 		ID:         fmt.Sprintf("%s_%s", sessionID, clientID),
 		SessionID:  sessionID,
@@ -98,12 +99,33 @@ func (sm *SessionManager) RegisterClient(sessionID, clientID, clientType, userID
 		ClientType: clientType,
 		UserID:     userID,
 		Status:     model.ClientStatusOnline,
+		// DisconnectedAt 置为 nil 表示重新上线
+		DisconnectedAt: nil,
 	}
-	
-	if err := sm.db.Create(sessionClient).Error; err != nil {
-		return fmt.Errorf("failed to register client: %w", err)
+
+	// 使用 GORM 的 FirstOrCreate 实现幂等注册
+	// 先查询是否存在，存在则更新状态，不存在则创建
+	var existingClient model.SessionClient
+	result := sm.db.Where("id = ?", sessionClient.ID).First(&existingClient)
+	if result.Error == gorm.ErrRecordNotFound {
+		// 记录不存在，创建新记录
+		if err := sm.db.Create(sessionClient).Error; err != nil {
+			return fmt.Errorf("failed to register client: %w", err)
+		}
+	} else if result.Error != nil {
+		return fmt.Errorf("failed to query client: %w", result.Error)
+	} else {
+		// 记录已存在（断线重连），更新状态为在线
+		now := time.Now()
+		if err := sm.db.Model(&existingClient).Updates(map[string]interface{}{
+			"status":          model.ClientStatusOnline,
+			"connected_at":    now,
+			"disconnected_at": nil,
+		}).Error; err != nil {
+			return fmt.Errorf("failed to update client status: %w", err)
+		}
 	}
-	
+
 	zap.L().Info("client registered to session",
 		zap.String("session_id", sessionID),
 		zap.String("client_id", clientID),
@@ -139,24 +161,26 @@ func (sm *SessionManager) GetSessionClients(sessionID string) ([]*model.SessionC
 }
 
 // SaveMessage 保存消息
-func (sm *SessionManager) SaveMessage(messageID, sessionID, msgType, from, to, content string, timestamp int64) error {
+func (sm *SessionManager) SaveMessage(messageID, sessionID, msgType, from, to, content string, timestamp int64, clientType int) error {
 	message := &model.Message{
-		ID:        messageID,
-		SessionID: sessionID,
-		Type:      msgType,
-		From:      from,
-		To:        to,
-		Content:   content,
-		Timestamp: timestamp,
+		ID:         messageID,
+		SessionID:  sessionID,
+		Type:       msgType,
+		From:       from,
+		To:         to,
+		Content:    content,
+		Timestamp:  timestamp,
+		ClientType: clientType,
 	}
-	
+
 	if err := sm.db.Create(message).Error; err != nil {
 		return fmt.Errorf("failed to save message: %w", err)
 	}
-	
+
 	zap.L().Debug("message saved",
 		zap.String("message_id", messageID),
 		zap.String("session_id", sessionID),
+		zap.Int("client_type", clientType),
 	)
 	return nil
 }

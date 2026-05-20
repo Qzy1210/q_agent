@@ -47,11 +47,20 @@ async def send_message(request: ChatRequest):
         ChatResponse: Agent的响应
     """
     try:
-        logger.info(f"收到聊天请求: {request.message[:50]}...")
+        logger.info("=" * 40)
+        logger.info(f"📨 收到聊天请求")
+        logger.info(f"   会话ID: {request.session_id or 'default-session'}")
+        logger.info(f"   消息长度: {len(request.message)} 字符")
+        logger.info(f"   消息内容: {request.message[:100]}{'...' if len(request.message) > 100 else ''}")
+        if request.context:
+            logger.info(f"   上下文消息数: {len(request.context)}")
 
         # TODO: 调用Agent处理消息
         # 当前返回模拟响应
         response_text = f"收到您的消息: {request.message}"
+
+        logger.info(f"✓ 聊天请求处理完成")
+        logger.info("=" * 40)
 
         return ChatResponse(
             response=response_text,
@@ -60,7 +69,7 @@ async def send_message(request: ChatRequest):
         )
 
     except Exception as e:
-        logger.error(f"处理聊天请求失败: {e}")
+        logger.error(f"✗ 处理聊天请求失败: {e}")
         return ChatResponse(
             response="",
             session_id=request.session_id or "default-session",

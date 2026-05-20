@@ -120,30 +120,53 @@ class ToolRegistry:
     
     def list_tools(self, enabled_only: bool = True) -> List[Dict[str, Any]]:
         """
-        列出所有工具
-        
+        列出所有工具（返回字典格式，用于展示/序列化）
+
         参数：
             enabled_only (bool): 是否只列出启用的工具
-            
+
         返回：
             List[Dict]: 工具信息列表
-            
+
         用途：
         - 构建Prompt时列出可用工具
         - 查看所有注册的工具
         """
         tools_list = []
-        
+
         for name, tool in self.tools.items():
             # 如果只列出启用的工具，跳过禁用的
             if enabled_only and name not in self.enabled_tools:
                 continue
-            
+
             tool_info = tool.to_dict()
             tool_info["enabled"] = name in self.enabled_tools
             tools_list.append(tool_info)
-        
-        
+
+
+        return tools_list
+
+    def get_tools(self, enabled_only: bool = True) -> List[Tool]:
+        """
+        获取所有工具对象（返回Tool对象列表，用于Agent调用）
+
+        参数：
+            enabled_only (bool): 是否只获取启用的工具
+
+        返回：
+            List[Tool]: 工具对象列表
+
+        用途：
+        - Agent需要访问工具的属性和方法时使用
+        - 传递给Agent构造函数
+        """
+        tools_list = []
+
+        for name, tool in self.tools.items():
+            if enabled_only and name not in self.enabled_tools:
+                continue
+            tools_list.append(tool)
+
         return tools_list
     
     def enable_tool(self, tool_name: str) -> bool:

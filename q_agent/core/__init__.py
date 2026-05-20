@@ -15,9 +15,12 @@ Q-Agent 核心模块
 """
 
 # 导入核心类，方便外部使用
-from .agent import Agent
+from .agent import Agent, AgentResult, AgentAction, AgentState, ToolCall
 from .memory import Memory
 from .context import ContextManager
 from .llm_client import LLMClientFactory, LLMResponse
 
-__all__ = ['Agent', 'Memory', 'ContextManager', 'LLMClientFactory', 'LLMResponse']
+__all__ = [
+    'Agent', 'AgentResult', 'AgentAction', 'AgentState', 'ToolCall',
+    'Memory', 'ContextManager', 'LLMClientFactory', 'LLMResponse'
+]

@@ -2,6 +2,7 @@ package websocket
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"sync"
@@ -29,26 +30,26 @@ type WebSocketConfig struct {
 
 // Server WebSocket服务器
 type Server struct {
-	config          *WebSocketConfig
-	upgrader        websocket.Upgrader
-	connManager     *ConnectionManager
-	router          *MessageRouter
-	sessionManager  *logic.SessionManager
-	mu              sync.RWMutex
-	ctx             context.Context
-	cancel          context.CancelFunc
+	config         *WebSocketConfig
+	upgrader       websocket.Upgrader
+	connManager    *ConnectionManager
+	router         *MessageRouter
+	sessionManager *logic.SessionManager
+	mu             sync.RWMutex
+	ctx            context.Context
+	cancel         context.CancelFunc
 }
 
 // NewServer 创建 WebSocket 服务器
 func NewServer(config *WebSocketConfig, sessionManager *logic.SessionManager) *Server {
 	ctx, cancel := context.WithCancel(context.Background())
-	
+
 	// 先创建连接管理器，传入会话管理器
 	connManager := NewConnectionManager(config.MaxConnections, sessionManager)
-	
+
 	// 创建消息路由器，传入连接管理器和会话管理器
 	router := NewMessageRouter(connManager, sessionManager)
-	
+
 	return &Server{
 		config:         config,
 		sessionManager: sessionManager,
@@ -74,8 +75,24 @@ func (s *Server) HandleWebSocket(c *gin.Context) {
 	userID := c.Query("user_id")
 	sessionID := c.Query("session_id")
 
+	zap.L().Info("========================================",
+		zap.String("event", "new_connection_request"),
+	)
+	zap.L().Info("收到 WebSocket 连接请求",
+		zap.String("client_type", clientType),
+		zap.String("client_id", clientID),
+		zap.String("user_id", userID),
+		zap.String("session_id", sessionID),
+		zap.String("remote_addr", c.ClientIP()),
+	)
+
 	// 验证参数
 	if clientID == "" || userID == "" || sessionID == "" {
+		zap.L().Warn("连接参数缺失",
+			zap.String("client_id", clientID),
+			zap.String("user_id", userID),
+			zap.String("session_id", sessionID),
+		)
 		c.JSON(http.StatusBadRequest, gin.H{"error": "missing required parameters"})
 		return
 	}
@@ -88,6 +105,9 @@ func (s *Server) HandleWebSocket(c *gin.Context) {
 	case "agent":
 		ct = ClientTypeAgent
 	default:
+		zap.L().Warn("无效的客户端类型",
+			zap.String("client_type", clientType),
+		)
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid client type"})
 		return
 	}
@@ -98,16 +118,27 @@ func (s *Server) HandleWebSocket(c *gin.Context) {
 	// 升级为 WebSocket 连接
 	conn, err := s.upgrader.Upgrade(c.Writer, c.Request, nil)
 	if err != nil {
-		zap.L().Error("failed to upgrade connection", zap.Error(err))
+		zap.L().Error("WebSocket 升级失败",
+			zap.Error(err),
+			zap.String("client_id", clientID),
+		)
 		return
 	}
+	zap.L().Info("✓ WebSocket 连接建立成功",
+		zap.String("client_id", clientID),
+		zap.String("client_type", clientType),
+		zap.String("session_id", sessionID),
+	)
 
 	// 创建客户端
 	client := NewClient(clientID, ct, userID, sessionID, conn)
 
 	// 注册客户端
 	if err := s.connManager.Register(client); err != nil {
-		zap.L().Error("failed to register client", zap.Error(err))
+		zap.L().Error("客户端注册失败",
+			zap.Error(err),
+			zap.String("client_id", clientID),
+		)
 		client.Close()
 		return
 	}
@@ -115,6 +146,8 @@ func (s *Server) HandleWebSocket(c *gin.Context) {
 	// 启动读写协程
 	go s.readPump(client)
 	go s.writePump(client)
+
+	zap.L().Info("========================================")
 
 	// 发送欢迎消息（包含会话恢复信息）
 	welcomeMsg := NewMessage(MessageTypeStatus, "system", sessionID, &StatusContent{
@@ -132,36 +165,53 @@ func (s *Server) HandleWebSocket(c *gin.Context) {
 // readPump 读取客户端消息
 func (s *Server) readPump(client *Client) {
 	defer func() {
+		zap.L().Info("客户端断开连接",
+			zap.String("client_id", client.ID),
+			zap.String("client_type", string(client.Type)),
+			zap.String("session_id", client.SessionID),
+		)
 		s.connManager.Unregister(client.ID)
 		client.Close()
 	}()
-	
+
 	// 设置读取限制
 	client.Conn.SetReadLimit(int64(s.config.MaxMessageSize))
-	
+
 	// 设置读取超时
 	pongWait, _ := time.ParseDuration(s.config.PongWait)
 	client.Conn.SetReadDeadline(time.Now().Add(pongWait))
-	
+
 	// 设置 Pong 处理器
 	client.Conn.SetPongHandler(func(string) error {
 		client.Conn.SetReadDeadline(time.Now().Add(pongWait))
 		client.UpdateActivity()
 		return nil
 	})
-	
+
+	zap.L().Info("开始监听客户端消息",
+		zap.String("client_id", client.ID),
+		zap.String("client_type", string(client.Type)),
+	)
+
 	for {
 		_, message, err := client.Conn.ReadMessage()
 		if err != nil {
 			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
-				zap.L().Error("unexpected close error", zap.Error(err))
+				zap.L().Error("连接异常关闭",
+					zap.Error(err),
+					zap.String("client_id", client.ID),
+				)
+			} else {
+				zap.L().Info("连接正常关闭",
+					zap.String("client_id", client.ID),
+				)
 			}
 			break
 		}
-		
+
 		// 更新活动时间
 		client.UpdateActivity()
-		
+
 		// 处理消息
 		s.handleMessage(client, message)
 	}
@@ -174,7 +224,7 @@ func (s *Server) writePump(client *Client) {
 		ticker.Stop()
 		client.Close()
 	}()
-	
+
 	for {
 		select {
 		case <-s.ctx.Done():
@@ -187,14 +237,14 @@ func (s *Server) writePump(client *Client) {
 				client.Conn.WriteMessage(websocket.CloseMessage, []byte{})
 				return
 			}
-			
+
 			// 发送消息
 			client.Conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
 			if err := client.Conn.WriteMessage(websocket.TextMessage, message); err != nil {
 				zap.L().Error("failed to write message", zap.Error(err))
 				return
 			}
-			
+
 		case <-ticker.C:
 			// 发送心跳
 			client.Conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
@@ -210,22 +260,25 @@ func (s *Server) handleMessage(client *Client, data []byte) {
 	// 解析消息
 	var msg Message
 	if err := msg.FromJSON(data); err != nil {
-		zap.L().Error("failed to parse message", zap.Error(err))
+		zap.L().Error("消息解析失败",
+			zap.Error(err),
+			zap.String("client_id", client.ID),
+		)
 		return
 	}
-	
+
 	// 设置消息来源
 	msg.From = client.ID
 	msg.SessionID = client.SessionID
-	
+
 	// 记录日志
-	zap.L().Info("message received",
+	zap.L().Info("📥 收到消息",
 		zap.String("message_id", msg.ID),
 		zap.String("type", string(msg.Type)),
 		zap.String("from", msg.From),
 		zap.String("session_id", msg.SessionID),
 	)
-	
+
 	// 路由消息
 	s.router.Route(client, &msg)
 }
@@ -296,12 +349,12 @@ func (s *Server) recoverSession(sessionID, userID, clientID string) {
 // syncHistoryMessages 同步历史消息给客户端
 // 发送最近的N条消息给重连的客户端
 func (s *Server) syncHistoryMessages(client *Client, sessionID string) {
-	if s.sessionManager == nil {
+	if s.sessionManager == nil || client.Type != ClientTypeApp {
 		return
 	}
 
-	// 获取最近10条消息
-	messages, err := s.sessionManager.GetSessionMessages(sessionID, 10, 0)
+	// 获取最近20条消息
+	messages, err := s.sessionManager.GetSessionMessages(sessionID, 20, 0)
 	if err != nil {
 		zap.L().Error("failed to get history messages",
 			zap.Error(err),
@@ -326,20 +379,22 @@ func (s *Server) syncHistoryMessages(client *Client, sessionID string) {
 	// 按时间顺序发送历史消息（从旧到新）
 	for i := len(messages) - 1; i >= 0; i-- {
 		msg := messages[i]
-		// 将存储的消息转换为 WebSocket Message 格式
-		var wsMsg Message
-		if err := wsMsg.FromJSON([]byte(msg.Content)); err != nil {
-			zap.L().Debug("failed to parse history message",
-				zap.Error(err),
-				zap.String("message_id", msg.ID),
-			)
+		// 构造WebSocket消息，包含client_type字段
+		wsMsg := map[string]interface{}{
+			"id":          msg.ID,
+			"type":        msg.Type,
+			"from":        msg.From,
+			"to":          msg.To,
+			"session_id":  msg.SessionID,
+			"timestamp":   msg.Timestamp,
+			"content":     parseContentString(msg.Content),
+			"client_type": msg.ClientType,
+		}
+		marshal, err := json.Marshal(wsMsg)
+		if err != nil {
 			continue
 		}
-
-		// 发送消息
-		if data, err := wsMsg.ToJSON(); err == nil {
-			client.WriteMessage(data)
-		}
+		client.WriteMessage(marshal)
 	}
 
 	zap.L().Info("history messages synced",
@@ -347,4 +402,13 @@ func (s *Server) syncHistoryMessages(client *Client, sessionID string) {
 		zap.String("client_id", client.ID),
 		zap.Int("message_count", len(messages)),
 	)
+}
+
+// parseContentString 解析消息内容JSON字符串
+func parseContentString(content string) interface{} {
+	var result map[string]interface{}
+	if err := json.Unmarshal([]byte(content), &result); err == nil {
+		return result
+	}
+	return content
 }

@@ -36,6 +36,12 @@
             android:label="@string/chat_title"
             android:theme="@style/Theme.ChatAI" />
 
+        <activity
+            android:name=".ui.SettingsActivity"
+            android:exported="false"
+            android:label="@string/settings"
+            android:theme="@style/Theme.ChatAI" />
+
     </application>
 
 </manifest>

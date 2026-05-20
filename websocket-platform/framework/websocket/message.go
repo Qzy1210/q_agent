@@ -9,24 +9,27 @@ import (
 type MessageType string
 
 const (
-	MessageTypeText       MessageType = "text"        // 文本消息
-	MessageTypeFile       MessageType = "file"        // 文件消息
-	MessageTypeToolCall   MessageType = "tool_call"   // 工具调用
-	MessageTypeToolResult MessageType = "tool_result" // 工具结果
-	MessageTypeHeartbeat  MessageType = "heartbeat"   // 心跳消息
-	MessageTypeStatus     MessageType = "status"      // 状态消息
-	MessageTypeError      MessageType = "error"       // 错误消息
+	MessageTypeText         MessageType = "text"         // 文本消息
+	MessageTypeFile         MessageType = "file"         // 文件消息
+	MessageTypeToolCall     MessageType = "tool_call"    // 工具调用
+	MessageTypeToolResult   MessageType = "tool_result"  // 工具结果
+	MessageTypeHeartbeat    MessageType = "heartbeat"    // 心跳消息
+	MessageTypeStatus       MessageType = "status"       // 状态消息
+	MessageTypeError        MessageType = "error"        // 错误消息
+	MessageTypeHistory      MessageType = "history"      // 历史消息请求/响应
+	MessageTypeAgentResult  MessageType = "agent_result" // Agent 执行结果（包含工具调用轨迹）
 )
 
 // Message WebSocket 消息
 type Message struct {
-	ID        string      `json:"id"`         // 消息唯一标识
-	Type      MessageType `json:"type"`       // 消息类型
-	From      string      `json:"from"`       // 发送者ID
-	To        string      `json:"to"`         // 接收者ID（可选）
-	SessionID string      `json:"session_id"` // 会话ID
-	Timestamp int64       `json:"timestamp"`  // 时间戳
-	Content   interface{} `json:"content"`    // 消息内容
+	ID         string      `json:"id"`          // 消息唯一标识
+	Type       MessageType `json:"type"`        // 消息类型
+	From       string      `json:"from"`        // 发送者ID
+	To         string      `json:"to"`          // 接收者ID（可选）
+	SessionID  string      `json:"session_id"`  // 会话ID
+	Timestamp  int64       `json:"timestamp"`   // 时间戳
+	Content    interface{} `json:"content"`     // 消息内容
+	ClientType int         `json:"client_type,omitempty"` // 客户端类型(1:App,2:Agent)
 }
 
 // NewMessage 创建新消息
@@ -48,7 +51,112 @@ func (m *Message) ToJSON() ([]byte, error) {
 
 // FromJSON 从JSON反序列化
 func (m *Message) FromJSON(data []byte) error {
-	return json.Unmarshal(data, m)
+	// 使用临时结构体来解析，避免直接解析 Content
+	type tempMessage struct {
+		ID        string          `json:"id"`
+		Type      MessageType     `json:"type"`
+		From      string          `json:"from"`
+		To        string          `json:"to"`
+		SessionID string          `json:"session_id"`
+		Timestamp int64           `json:"timestamp"`
+		Content   json.RawMessage `json:"content"`
+	}
+
+	var temp tempMessage
+	if err := json.Unmarshal(data, &temp); err != nil {
+		return err
+	}
+
+	m.ID = temp.ID
+	m.Type = temp.Type
+	m.From = temp.From
+	m.To = temp.To
+	m.SessionID = temp.SessionID
+	m.Timestamp = temp.Timestamp
+
+	// 根据消息类型解析 Content
+	m.Content = parseContent(temp.Type, temp.Content)
+
+	return nil
+}
+
+// parseContent 根据消息类型解析内容
+func parseContent(msgType MessageType, rawContent json.RawMessage) interface{} {
+	if len(rawContent) == 0 {
+		return nil
+	}
+
+	switch msgType {
+	case MessageTypeText:
+		var content TextContent
+		if err := json.Unmarshal(rawContent, &content); err == nil {
+			return &content
+		}
+	case MessageTypeFile:
+		var content FileContent
+		if err := json.Unmarshal(rawContent, &content); err == nil {
+			return &content
+		}
+	case MessageTypeToolCall:
+		var content ToolCallContent
+		if err := json.Unmarshal(rawContent, &content); err == nil {
+			return &content
+		}
+	case MessageTypeToolResult:
+		var content ToolResultContent
+		if err := json.Unmarshal(rawContent, &content); err == nil {
+			return &content
+		}
+	case MessageTypeStatus:
+		var content StatusContent
+		if err := json.Unmarshal(rawContent, &content); err == nil {
+			return &content
+		}
+	case MessageTypeHeartbeat:
+		var content HeartbeatContent
+		if err := json.Unmarshal(rawContent, &content); err == nil {
+			return &content
+		}
+	case MessageTypeHistory:
+		var content HistoryContent
+		if err := json.Unmarshal(rawContent, &content); err == nil {
+			return &content
+		}
+	}
+
+	// 如果解析失败，返回原始 map
+	var generic map[string]interface{}
+	if err := json.Unmarshal(rawContent, &generic); err == nil {
+		return generic
+	}
+
+	return nil
+}
+
+// GetTextContent 安全获取文本内容
+func (m *Message) GetTextContent() *TextContent {
+	switch c := m.Content.(type) {
+	case *TextContent:
+		return c
+	case map[string]interface{}:
+		if text, ok := c["text"].(string); ok {
+			return &TextContent{Text: text}
+		}
+	}
+	return nil
+}
+
+// GetStatusContent 安全获取状态内容
+func (m *Message) GetStatusContent() *StatusContent {
+	switch c := m.Content.(type) {
+	case *StatusContent:
+		return c
+	case map[string]interface{}:
+		status, _ := c["status"].(string)
+		message, _ := c["message"].(string)
+		return &StatusContent{Status: status, Message: message}
+	}
+	return nil
 }
 
 // TextContent 文本消息内容
@@ -86,6 +194,13 @@ type StatusContent struct {
 // HeartbeatContent 心跳消息内容
 type HeartbeatContent struct {
 	Timestamp int64 `json:"timestamp"` // 时间戳
+}
+
+// HistoryContent 历史消息内容
+type HistoryContent struct {
+	SessionID string                   `json:"session_id"` // 会话ID
+	Messages  []map[string]interface{} `json:"messages"`   // 消息列表
+	Total     int                      `json:"total"`      // 消息总数
 }
 
 // generateMessageID 生成消息ID

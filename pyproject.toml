@@ -1,0 +1,97 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "q_agent"
+version = "1.0.0"
+description = "AI Agent Learning Framework - 从零实现 Agent Loop、Memory、Context、Tool Calling"
+readme = "README.md"
+license = {text = "MIT"}
+authors = [
+    {name = "QZY"}
+]
+requires-python = ">=3.10"
+keywords = ["ai", "agent", "llm", "openai", "anthropic"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+# 核心依赖
+dependencies = [
+    "typing-extensions>=4.0.0",
+    "openai>=1.0.0",
+    "anthropic>=0.18.0",
+    "websockets>=12.0",
+    "sqlalchemy>=2.0.0",
+    "pymysql>=1.1.0",
+    "pydantic>=2.0.0",
+    "fastapi>=0.100.0",
+    "uvicorn>=0.23.0",
+    "PyYAML>=6.0.0",
+    "requests>=2.28.0",
+]
+
+# 可选依赖组
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-asyncio>=0.21.0",
+    "black>=23.0.0",
+    "flake8>=6.0.0",
+    "mypy>=1.0.0",
+]
+llm = [
+    "dashscope>=1.0.0",      # 通义千问
+    "zhipuai>=2.0.0",        # 智谱AI
+]
+
+# 项目 URL
+[project.urls]
+Homepage = "https://github.com/qzy/q_agent"
+Documentation = "https://github.com/qzy/q_agent#readme"
+Repository = "https://github.com/qzy/q_agent.git"
+
+# pytest 配置
+[tool.pytest.ini_options]
+testpaths = ["q_agent/tests"]
+python_files = ["test_*.py"]
+python_functions = ["test_*"]
+addopts = "-v --tb=short"
+
+# black 格式化配置
+[tool.black]
+line-length = 100
+target-version = ["py310", "py311", "py312"]
+include = '\.pyi?$'
+exclude = '''
+/(
+    \.git
+    | \.hg
+    | \.mypy_cache
+    | \.tox
+    | \.venv
+    | _build
+    | buck-out
+    | build
+    | dist
+)/
+'''
+
+# mypy 类型检查配置
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_configs = true
+ignore_missing_imports = true
+
+# setuptools 配置（明确指定包）
+[tool.setuptools]
+packages = ["q_agent", "q_agent.core", "q_agent.tools", "q_agent.config", "q_agent.api", "q_agent.api.routes", "q_agent.tests", "q_agent.agents"]

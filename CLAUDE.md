@@ -19,10 +19,10 @@ A from-scratch AI Agent implementation for learning core Agent concepts: Agent L
 
 ```bash
 # Run the Agent example
-python examples/simple_agent.py
+python agents/simple_agent.py
 
 # Run the LLM usage example
-python examples/llm_usage_example.py
+python agents/llm_usage_example.py
 
 # Start the FastAPI server
 python -m q_agent.api.main

@@ -37,14 +37,15 @@ func (SessionClient) TableName() string {
 
 // Message 消息记录模型
 type Message struct {
-	ID        string    `gorm:"primaryKey;type:varchar(64);comment:消息ID" json:"id"`
-	SessionID string    `gorm:"type:varchar(64);not null;index;comment:会话ID" json:"session_id"`
-	Type      string    `gorm:"type:varchar(20);not null;comment:消息类型" json:"type"`
-	From      string    `gorm:"type:varchar(64);not null;index;comment:发送者ID" json:"from"`
-	To        string    `gorm:"type:varchar(64);comment:接收者ID" json:"to"`
-	Content   string    `gorm:"type:text;comment:消息内容(JSON)" json:"content"`
-	Timestamp int64     `gorm:"not null;index;comment:时间戳" json:"timestamp"`
-	CreatedAt time.Time `gorm:"autoCreateTime;comment:创建时间" json:"created_at"`
+	ID         string    `gorm:"primaryKey;type:varchar(64);comment:消息ID" json:"id"`
+	SessionID  string    `gorm:"type:varchar(64);not null;index;comment:会话ID" json:"session_id"`
+	Type       string    `gorm:"type:varchar(20);not null;comment:消息类型" json:"type"`
+	From       string    `gorm:"type:varchar(64);not null;index;comment:发送者ID" json:"from"`
+	To         string    `gorm:"type:varchar(64);comment:接收者ID" json:"to"`
+	Content    string    `gorm:"type:text;comment:消息内容(JSON)" json:"content"`
+	Timestamp  int64     `gorm:"not null;index;comment:时间戳(毫秒)" json:"timestamp"`
+	ClientType int       `gorm:"type:tinyint;default:0;comment:客户端类型(1:App,2:Agent)" json:"client_type"`
+	CreatedAt  time.Time `gorm:"autoCreateTime;comment:创建时间" json:"created_at"`
 }
 
 // TableName 指定表名
@@ -61,8 +62,14 @@ const (
 
 // ClientStatus 客户端状态常量
 const (
-	ClientStatusOnline     = "online"    // 在线
-	ClientStatusOffline    = "offline"   // 离线
+	ClientStatusOnline  = "online"  // 在线
+	ClientStatusOffline = "offline" // 离线
+)
+
+// MessageClientType 消息客户端类型常量
+const (
+	MessageClientTypeApp   = 1 // App 发送的消息
+	MessageClientTypeAgent = 2 // Agent 回复的消息
 )
 
 // MessageType 消息类型常量

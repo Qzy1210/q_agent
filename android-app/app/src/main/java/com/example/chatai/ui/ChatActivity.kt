@@ -10,6 +10,7 @@ import android.widget.TextView
 import androidx.activity.viewModels
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.widget.Toolbar
+import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.example.chatai.R
@@ -19,6 +20,7 @@ import com.example.chatai.ui.adapter.MessageAdapter
 import com.example.chatai.ui.viewmodel.ChatViewModel
 import com.example.chatai.util.Constants
 import com.google.android.material.snackbar.Snackbar
+import kotlinx.coroutines.launch
 
 /**
  * 聊天Activity - 消息列表页面
@@ -54,7 +56,7 @@ class ChatActivity : AppCompatActivity() {
         setupRecyclerView()
         observeData()
 
-        // 连接WebSocket
+        // 连接WebSocket（复用全局连接）
         sessionId?.let {
             viewModel.connect(it)
         }
@@ -102,31 +104,39 @@ class ChatActivity : AppCompatActivity() {
      */
     private fun observeData() {
         // 消息列表
-        viewModel.messages.observe(this) { messages ->
-            adapter.submitList(messages) {
-                // 滚动到底部
-                if (messages.isNotEmpty()) {
-                    recyclerView.smoothScrollToPosition(messages.size - 1)
+        lifecycleScope.launch {
+            viewModel.messages.collect { messages ->
+                adapter.submitList(messages) {
+                    // 滚动到底部
+                    if (messages.isNotEmpty()) {
+                        recyclerView.smoothScrollToPosition(messages.size - 1)
+                    }
                 }
+                tvEmpty.visibility = if (messages.isEmpty()) View.VISIBLE else View.GONE
             }
-            tvEmpty.visibility = if (messages.isEmpty()) View.VISIBLE else View.GONE
         }
 
         // 连接状态
-        viewModel.connectionState.observe(this) { state ->
-            updateConnectionStatus(state)
+        lifecycleScope.launch {
+            viewModel.connectionState.collect { state ->
+                updateConnectionStatus(state)
+            }
         }
 
         // 加载状态
-        viewModel.isLoading.observe(this) { isLoading ->
-            progressBar.visibility = if (isLoading) View.VISIBLE else View.GONE
+        lifecycleScope.launch {
+            viewModel.isLoading.collect { isLoading ->
+                progressBar.visibility = if (isLoading) View.VISIBLE else View.GONE
+            }
         }
 
         // 错误信息
-        viewModel.error.observe(this) { error ->
-            error?.let {
-                Snackbar.make(recyclerView, it, Snackbar.LENGTH_LONG).show()
-                viewModel.clearError()
+        lifecycleScope.launch {
+            viewModel.error.collect { error ->
+                error?.let {
+                    Snackbar.make(recyclerView, it, Snackbar.LENGTH_LONG).show()
+                    viewModel.clearError()
+                }
             }
         }
     }

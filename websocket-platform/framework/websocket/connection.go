@@ -30,6 +30,8 @@ type Client struct {
 	mu           sync.RWMutex      // 读写锁
 	ctx          context.Context   // 上下文
 	cancel       context.CancelFunc // 取消函数
+	closed       bool              // 是否已关闭（防止重复关闭）
+	closeMu      sync.Mutex        // 关闭锁（确保关闭操作原子性）
 }
 
 // NewClient 创建新的 WebSocket 客户端
@@ -45,6 +47,7 @@ func NewClient(id string, clientType ClientType, userID, sessionID string, conn 
 		LastActivity: time.Now(),
 		ctx:          ctx,
 		cancel:       cancel,
+		closed:       false,
 	}
 }
 
@@ -59,12 +62,24 @@ func (c *Client) WriteMessage(message []byte) error {
 }
 
 // Close 关闭客户端连接
+// 使用 closeMu 确保只关闭一次，防止 panic: close of closed channel
 func (c *Client) Close() {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	
+	c.closeMu.Lock()
+	defer c.closeMu.Unlock()
+
+	// 检查是否已关闭
+	if c.closed {
+		return
+	}
+	c.closed = true
+
+	// 取消上下文
 	c.cancel()
+
+	// 关闭发送通道
 	close(c.SendChan)
+
+	// 关闭 WebSocket 连接
 	c.Conn.Close()
 }
 
@@ -110,21 +125,25 @@ func NewConnectionManager(maxConns int, sessionManager *logic.SessionManager) *C
 func (cm *ConnectionManager) Register(client *Client) error {
 	cm.mu.Lock()
 	defer cm.mu.Unlock()
-	
+
 	// 检查连接数限制
 	if len(cm.clients) >= cm.maxConns {
+		zap.L().Warn("⚠️ 连接数已达上限",
+			zap.Int("max_connections", cm.maxConns),
+			zap.Int("current_connections", len(cm.clients)),
+		)
 		return ErrMaxConnectionsReached
 	}
-	
+
 	// 注册客户端
 	cm.clients[client.ID] = client
-	
+
 	// 更新用户映射
 	cm.userMap[client.UserID] = append(cm.userMap[client.UserID], client.ID)
-	
+
 	// 更新会话映射
 	cm.sessionMap[client.SessionID] = append(cm.sessionMap[client.SessionID], client.ID)
-	
+
 	// 持久化到数据库
 	if cm.sessionManager != nil {
 		if err := cm.sessionManager.RegisterClient(
@@ -133,20 +152,21 @@ func (cm *ConnectionManager) Register(client *Client) error {
 			string(client.Type),
 			client.UserID,
 		); err != nil {
-			zap.L().Error("failed to persist client registration",
+			zap.L().Error("客户端注册持久化失败",
 				zap.Error(err),
 				zap.String("client_id", client.ID),
 			)
 		}
 	}
-	
-	zap.L().Info("client registered",
+
+	zap.L().Info("✓ 客户端注册成功",
 		zap.String("client_id", client.ID),
 		zap.String("client_type", string(client.Type)),
 		zap.String("user_id", client.UserID),
 		zap.String("session_id", client.SessionID),
+		zap.Int("total_connections", len(cm.clients)),
 	)
-	
+
 	return nil
 }
 
@@ -154,15 +174,15 @@ func (cm *ConnectionManager) Register(client *Client) error {
 func (cm *ConnectionManager) Unregister(clientID string) {
 	cm.mu.Lock()
 	defer cm.mu.Unlock()
-	
+
 	client, exists := cm.clients[clientID]
 	if !exists {
 		return
 	}
-	
+
 	// 从客户端映射中删除
 	delete(cm.clients, clientID)
-	
+
 	// 从用户映射中删除
 	if clientIDs, ok := cm.userMap[client.UserID]; ok {
 		cm.userMap[client.UserID] = removeFromSlice(clientIDs, clientID)
@@ -170,7 +190,7 @@ func (cm *ConnectionManager) Unregister(clientID string) {
 			delete(cm.userMap, client.UserID)
 		}
 	}
-	
+
 	// 从会话映射中删除
 	if clientIDs, ok := cm.sessionMap[client.SessionID]; ok {
 		cm.sessionMap[client.SessionID] = removeFromSlice(clientIDs, clientID)
@@ -178,20 +198,23 @@ func (cm *ConnectionManager) Unregister(clientID string) {
 			delete(cm.sessionMap, client.SessionID)
 		}
 	}
-	
+
 	// 持久化到数据库
 	if cm.sessionManager != nil {
 		if err := cm.sessionManager.UnregisterClient(clientID); err != nil {
-			zap.L().Error("failed to persist client unregistration",
+			zap.L().Error("客户端注销持久化失败",
 				zap.Error(err),
 				zap.String("client_id", clientID),
 			)
 		}
 	}
-	
-	zap.L().Info("client unregistered",
+
+	zap.L().Info("✓ 客户端注销成功",
 		zap.String("client_id", client.ID),
+		zap.String("client_type", string(client.Type)),
 		zap.String("user_id", client.UserID),
+		zap.String("session_id", client.SessionID),
+		zap.Int("remaining_connections", len(cm.clients)),
 	)
 }
 

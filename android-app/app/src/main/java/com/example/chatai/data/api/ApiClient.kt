@@ -13,8 +13,8 @@ import retrofit2.converter.gson.GsonConverterFactory
  */
 object ApiClient {
 
-    // 默认服务器地址（可根据实际情况修改）
-    private const val BASE_URL = "http://10.0.2.2:8080/"  // Android模拟器访问本机
+    // 远端服务器地址
+    private const val BASE_URL = "http://49.233.105.26:8088/"
 
     private var retrofit: Retrofit? = null
     private var apiService: ApiService? = null

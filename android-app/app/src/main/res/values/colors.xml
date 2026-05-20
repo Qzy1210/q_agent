@@ -15,14 +15,35 @@
     <color name="background">#FFF5F5F5</color>
     <color name="surface">#FFFFFFFF</color>
 
-    <!-- Message Colors -->
-    <color name="message_sent">#FF6200EE</color>
-    <color name="message_received">#FFE0E0E0</color>
+    <!-- Message Colors - Gradient style like web -->
+    <color name="message_sent_start">#FF667EEA</color>
+    <color name="message_sent_end">#FF764BA2</color>
+    <color name="message_received">#FFFFFFFF</color>
     <color name="message_sent_text">#FFFFFFFF</color>
     <color name="message_received_text">#FF000000</color>
+    <color name="message_border">#FFE9ECEF</color>
+
+    <!-- Message Type Badge Colors - matching web -->
+    <color name="type_text_bg">#FFE3F2FD</color>
+    <color name="type_text_text">#FF1976D2</color>
+    <color name="type_file_bg">#FFF3E5F5</color>
+    <color name="type_file_text">#FF7B1FA2</color>
+    <color name="type_tool_call_bg">#FFFFF3E0</color>
+    <color name="type_tool_call_text">#FFF57C00</color>
+    <color name="type_tool_result_bg">#FFE8F5E9</color>
+    <color name="type_tool_result_text">#FF388E3C</color>
+    <color name="type_status_bg">#FFFCE4EC</color>
+    <color name="type_status_text">#FFC2185B</color>
+    <color name="type_error_bg">#FFFFEBEE</color>
+    <color name="type_error_text">#FFD32F2F</color>
+    <color name="type_heartbeat_bg">#FFF5F5F5</color>
+    <color name="type_heartbeat_text">#FF616161</color>
 
     <!-- Status Colors -->
     <color name="status_online">#FF4CAF50</color>
     <color name="status_offline">#FF9E9E9E</color>
     <color name="status_connecting">#FFFFC107</color>
+
+    <!-- Launcher Icon Colors -->
+    <color name="ic_launcher_background">#FF6200EE</color>
 </resources>

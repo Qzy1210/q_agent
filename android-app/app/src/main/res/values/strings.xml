@@ -10,7 +10,28 @@
     <string name="disconnected">已断开</string>
     <string name="no_sessions">暂无会话</string>
     <string name="no_messages">暂无消息</string>
-    <string name="session_id">会话ID: %s</string>
+    <string name="session_id_format">会话ID: %s</string>
     <string name="error_connect">连接失败</string>
     <string name="error_send">发送失败</string>
+
+    <!-- Settings -->
+    <string name="settings">设置</string>
+    <string name="server_settings">服务器设置</string>
+    <string name="server_address">服务器地址</string>
+    <string name="server_address_hint">ws://192.168.1.6:8088</string>
+    <string name="server_address_tip">真机连接请使用电脑局域网IP，模拟器可使用 10.0.2.2</string>
+    <string name="user_settings">用户设置</string>
+    <string name="client_id">客户端 ID</string>
+    <string name="client_id_hint">自动生成或手动输入</string>
+    <string name="user_id">用户 ID</string>
+    <string name="user_id_hint">如: user_001</string>
+    <string name="session_id">会话 ID</string>
+    <string name="session_id_hint">如: session_001</string>
+    <string name="quick_actions">快捷操作</string>
+    <string name="regenerate_client_id">重新生成客户端 ID</string>
+    <string name="regenerate_user_id">重新生成用户 ID</string>
+    <string name="save">保存设置</string>
+    <string name="settings_saved">设置已保存</string>
+    <string name="connect">连接</string>
+    <string name="disconnect">断开</string>
 </resources>

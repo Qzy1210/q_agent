@@ -1,0 +1,82 @@
+# MCP 服务器配置示例
+# Model Context Protocol (MCP) 是 Anthropic 开放的标准协议
+# 用于 AI Agent 与外部工具/资源的连接
+#
+# 配置格式说明：
+# - name: 服务器名称（唯一标识）
+# - transport: 传输方式（stdio | http）
+# - command: stdio 方式的启动命令
+# - args: 命令参数列表
+# - env: 环境变量
+# - base_url: HTTP 方式的服务器 URL
+# - headers: HTTP 请求头
+# - enabled: 是否启用
+
+mcp_servers:
+  # ========== 文件系统 MCP Server ==========
+  # 官方 filesystem MCP Server，提供文件读写能力
+  - name: filesystem
+    transport: stdio
+    command: npx
+    args:
+      - "-y"
+      - "@modelcontextprotocol/server-filesystem"
+      - "/tmp"  # 允许访问的目录
+    enabled: true
+
+  # ========== GitHub MCP Server ==========
+  # 官方 GitHub MCP Server，提供 GitHub API 能力
+  - name: github
+    transport: stdio
+    command: npx
+    args:
+      - "-y"
+      - "@modelcontextprotocol/server-github"
+    env:
+      GITHUB_TOKEN: ${GITHUB_TOKEN}  # 从环境变量读取
+    enabled: false  # 需要配置 GITHUB_TOKEN 后启用
+
+  # ========== SQLite MCP Server ==========
+  # 官方 SQLite MCP Server，提供数据库操作能力
+  - name: sqlite
+    transport: stdio
+    command: npx
+    args:
+      - "-y"
+      - "@modelcontextprotocol/server-sqlite"
+      - "/path/to/database.db"
+    enabled: false
+
+  # ========== Puppeteer MCP Server ==========
+  # 官方 Puppeteer MCP Server，提供浏览器自动化能力
+  - name: puppeteer
+    transport: stdio
+    command: npx
+    args:
+      - "-y"
+      - "@modelcontextprotocol/server-puppeteer"
+    enabled: false
+
+  # ========== 自定义 HTTP MCP Server ==========
+  # 自定义远程 MCP Server 示例
+  - name: custom_api
+    transport: http
+    base_url: https://api.example.com/mcp
+    headers:
+      Authorization: Bearer ${API_TOKEN}
+      Content-Type: application/json
+    enabled: false
+
+# ========== 全局配置 ==========
+global:
+  # 连接超时时间（秒）
+  connection_timeout: 30
+
+  # 工具调用超时时间（秒）
+  tool_timeout: 60
+
+  # 是否自动注册 MCP 工具到 Agent
+  auto_register_tools: true
+
+  # 是否自动连接所有 enabled 的服务器
+  auto_connect: false

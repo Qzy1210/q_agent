@@ -1,0 +1,1273 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebSocket 调试工具</title>
+    <!-- Marked.js for Markdown rendering -->
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <!-- Highlight.js for code highlighting (bundle version includes common languages) -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11.9.0/styles/github-dark.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/highlight.js@11.9.0/lib/highlight.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+
+        .header {
+            text-align: center;
+            color: white;
+            margin-bottom: 20px;
+        }
+
+        .header h1 {
+            font-size: 2rem;
+            margin-bottom: 5px;
+        }
+
+        .header p {
+            opacity: 0.8;
+        }
+
+        .main-grid {
+            display: grid;
+            grid-template-columns: 300px 1fr;
+            gap: 20px;
+        }
+
+        .panel {
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
+            overflow: hidden;
+        }
+
+        .panel-header {
+            background: #f8f9fa;
+            padding: 15px 20px;
+            border-bottom: 1px solid #e9ecef;
+            font-weight: 600;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .panel-body {
+            padding: 20px;
+        }
+
+        /* Connection Panel */
+        .connection-form {
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+        }
+
+        .form-group {
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+        }
+
+        .form-group label {
+            font-size: 0.85rem;
+            font-weight: 500;
+            color: #495057;
+        }
+
+        .form-group input,
+        .form-group select {
+            padding: 10px 12px;
+            border: 1px solid #ced4da;
+            border-radius: 6px;
+            font-size: 0.9rem;
+            transition: border-color 0.2s, box-shadow 0.2s;
+        }
+
+        .form-group input:focus,
+        .form-group select:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+
+        .btn {
+            padding: 12px 20px;
+            border: none;
+            border-radius: 6px;
+            font-size: 0.9rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+        }
+
+        .btn-danger {
+            background: #dc3545;
+            color: white;
+        }
+
+        .btn-danger:hover {
+            background: #c82333;
+        }
+
+        .btn-secondary {
+            background: #6c757d;
+            color: white;
+        }
+
+        .btn-secondary:hover {
+            background: #5a6268;
+        }
+
+        .btn-success {
+            background: #28a745;
+            color: white;
+        }
+
+        .btn-success:hover {
+            background: #218838;
+        }
+
+        /* Status Indicator */
+        .status {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 10px;
+            border-radius: 6px;
+            font-size: 0.85rem;
+        }
+
+        .status-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            animation: pulse 2s infinite;
+        }
+
+        .status.disconnected .status-dot {
+            background: #dc3545;
+            animation: none;
+        }
+
+        .status.connected .status-dot {
+            background: #28a745;
+        }
+
+        .status.connecting .status-dot {
+            background: #ffc107;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        /* Right Panel */
+        .right-panel {
+            display: flex;
+            flex-direction: column;
+            height: calc(100vh - 140px);
+        }
+
+        .tabs {
+            display: flex;
+            border-bottom: 1px solid #e9ecef;
+        }
+
+        .tab {
+            padding: 12px 20px;
+            cursor: pointer;
+            border-bottom: 2px solid transparent;
+            transition: all 0.2s;
+            font-weight: 500;
+            color: #6c757d;
+        }
+
+        .tab:hover {
+            color: #495057;
+        }
+
+        .tab.active {
+            color: #667eea;
+            border-bottom-color: #667eea;
+        }
+
+        .tab-content {
+            display: none;
+            flex: 1;
+            overflow: hidden;
+        }
+
+        .tab-content.active {
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* Messages Tab */
+        .messages-container {
+            flex: 1;
+            overflow-y: auto;
+            padding: 15px;
+            background: #f8f9fa;
+        }
+
+        .message {
+            margin-bottom: 15px;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .message.sent {
+            align-items: flex-end;
+        }
+
+        .message.received {
+            align-items: flex-start;
+        }
+
+        .message.system {
+            align-items: center;
+        }
+
+        .message-bubble {
+            max-width: 80%;
+            padding: 12px 16px;
+            border-radius: 12px;
+            position: relative;
+        }
+
+        .message.sent .message-bubble {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border-bottom-right-radius: 4px;
+        }
+
+        .message.received .message-bubble {
+            background: white;
+            border: 1px solid #e9ecef;
+            border-bottom-left-radius: 4px;
+        }
+
+        .message.system .message-bubble {
+            background: #fff3cd;
+            border: 1px solid #ffc107;
+            color: #856404;
+        }
+
+        .message-meta {
+            font-size: 0.75rem;
+            margin-top: 5px;
+            opacity: 0.7;
+        }
+
+        .message-type {
+            display: inline-block;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-size: 0.7rem;
+            font-weight: 500;
+            margin-bottom: 5px;
+        }
+
+        .type-text { background: #e3f2fd; color: #1976d2; }
+        .type-file { background: #f3e5f5; color: #7b1fa2; }
+        .type-tool_call { background: #fff3e0; color: #f57c00; }
+        .type-tool_result { background: #e8f5e9; color: #388e3c; }
+        .type-status { background: #fce4ec; color: #c2185b; }
+        .type-error { background: #ffebee; color: #d32f2f; }
+        .type-heartbeat { background: #f5f5f5; color: #616161; }
+        .type-agent_result { background: #e8f5e9; color: #2e7d32; }
+
+        /* Tool Call Info */
+        .tool-calls-info {
+            margin-top: 10px;
+            padding: 10px;
+            background: rgba(0, 0, 0, 0.05);
+            border-radius: 6px;
+            font-size: 0.85rem;
+        }
+
+        .tool-calls-info summary {
+            cursor: pointer;
+            font-weight: 500;
+            color: #667eea;
+        }
+
+        .tool-call-item {
+            margin: 8px 0;
+            padding: 8px;
+            background: rgba(255, 255, 255, 0.5);
+            border-radius: 4px;
+            border-left: 3px solid #667eea;
+        }
+
+        .tool-call-item .tool-name {
+            font-weight: 600;
+            color: #333;
+        }
+
+        .tool-call-item .tool-params {
+            font-family: monospace;
+            font-size: 0.8rem;
+            color: #666;
+            margin: 4px 0;
+        }
+
+        .tool-call-item .tool-result {
+            font-size: 0.8rem;
+            color: #888;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            max-width: 100%;
+        }
+
+        .tool-call-item.success { border-left-color: #28a745; }
+        .tool-call-item.failed { border-left-color: #dc3545; }
+
+        .agent-meta {
+            display: flex;
+            gap: 10px;
+            margin-top: 8px;
+            font-size: 0.75rem;
+            color: #888;
+        }
+
+        .agent-meta span {
+            padding: 2px 6px;
+            background: rgba(0, 0, 0, 0.05);
+            border-radius: 3px;
+        }
+
+        /* Input Area */
+        .input-area {
+            padding: 15px;
+            border-top: 1px solid #e9ecef;
+            background: white;
+        }
+
+        .message-type-selector {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 10px;
+        }
+
+        .type-btn {
+            padding: 6px 12px;
+            border: 1px solid #ced4da;
+            border-radius: 4px;
+            background: white;
+            cursor: pointer;
+            font-size: 0.8rem;
+            transition: all 0.2s;
+        }
+
+        .type-btn.active {
+            background: #667eea;
+            color: white;
+            border-color: #667eea;
+        }
+
+        .input-row {
+            display: flex;
+            gap: 10px;
+        }
+
+        .input-row textarea {
+            flex: 1;
+            padding: 12px;
+            border: 1px solid #ced4da;
+            border-radius: 6px;
+            resize: none;
+            font-family: inherit;
+            font-size: 0.9rem;
+        }
+
+        .input-row textarea:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        /* JSON Editor */
+        .json-editor {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            padding: 15px;
+        }
+
+        .json-editor textarea {
+            flex: 1;
+            font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+            font-size: 0.85rem;
+            padding: 15px;
+            border: 1px solid #ced4da;
+            border-radius: 6px;
+            resize: none;
+        }
+
+        /* Quick Actions */
+        .quick-actions {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-top: 15px;
+            padding-top: 15px;
+            border-top: 1px solid #e9ecef;
+        }
+
+        .quick-btn {
+            padding: 8px 12px;
+            border: 1px solid #ced4da;
+            border-radius: 4px;
+            background: white;
+            cursor: pointer;
+            font-size: 0.8rem;
+            transition: all 0.2s;
+        }
+
+        .quick-btn:hover {
+            background: #f8f9fa;
+            border-color: #667eea;
+        }
+
+        /* Scrollbar */
+        ::-webkit-scrollbar {
+            width: 6px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: #f1f1f1;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: #c1c1c1;
+            border-radius: 3px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: #a1a1a1;
+        }
+
+        /* Toast Notification */
+        .toast {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            padding: 12px 20px;
+            border-radius: 6px;
+            color: white;
+            font-size: 0.9rem;
+            opacity: 0;
+            transform: translateY(20px);
+            transition: all 0.3s;
+            z-index: 1000;
+        }
+
+        .toast.show {
+            opacity: 1;
+            transform: translateY(0);
+        }
+
+        .toast.success { background: #28a745; }
+        .toast.error { background: #dc3545; }
+        .toast.info { background: #17a2b8; }
+
+        /* Stats */
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 10px;
+            margin-top: 15px;
+            padding-top: 15px;
+            border-top: 1px solid #e9ecef;
+        }
+
+        .stat-item {
+            text-align: center;
+            padding: 10px;
+            background: #f8f9fa;
+            border-radius: 6px;
+        }
+
+        .stat-value {
+            font-size: 1.5rem;
+            font-weight: 600;
+            color: #667eea;
+        }
+
+        .stat-label {
+            font-size: 0.75rem;
+            color: #6c757d;
+        }
+
+        /* Tool Call Form */
+        .tool-form {
+            display: none;
+            padding: 10px;
+            background: #f8f9fa;
+            border-radius: 6px;
+            margin-bottom: 10px;
+        }
+
+        .tool-form.active {
+            display: block;
+        }
+
+        .tool-form input {
+            width: 100%;
+            padding: 8px;
+            border: 1px solid #ced4da;
+            border-radius: 4px;
+            margin-bottom: 8px;
+        }
+
+        /* Markdown Content Styles */
+        .markdown-content {
+            line-height: 1.6;
+        }
+
+        .markdown-content h1,
+        .markdown-content h2,
+        .markdown-content h3,
+        .markdown-content h4,
+        .markdown-content h5,
+        .markdown-content h6 {
+            margin-top: 0.5em;
+            margin-bottom: 0.5em;
+            font-weight: 600;
+        }
+
+        .markdown-content h1 { font-size: 1.5em; }
+        .markdown-content h2 { font-size: 1.3em; }
+        .markdown-content h3 { font-size: 1.1em; }
+
+        .markdown-content p {
+            margin: 0.5em 0;
+        }
+
+        .markdown-content ul,
+        .markdown-content ol {
+            margin: 0.5em 0;
+            padding-left: 1.5em;
+        }
+
+        .markdown-content li {
+            margin: 0.25em 0;
+        }
+
+        .markdown-content code {
+            background: rgba(0, 0, 0, 0.1);
+            padding: 0.15em 0.4em;
+            border-radius: 3px;
+            font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+            font-size: 0.9em;
+        }
+
+        .message.received .markdown-content code {
+            background: #f0f0f0;
+        }
+
+        .markdown-content pre {
+            margin: 0.5em 0;
+            padding: 0.8em;
+            border-radius: 6px;
+            overflow-x: auto;
+            background: #1e1e1e;
+        }
+
+        .markdown-content pre code {
+            background: transparent;
+            padding: 0;
+            font-size: 0.85em;
+            line-height: 1.5;
+        }
+
+        .markdown-content blockquote {
+            margin: 0.5em 0;
+            padding: 0.5em 1em;
+            border-left: 3px solid #667eea;
+            background: rgba(102, 126, 234, 0.1);
+            border-radius: 0 4px 4px 0;
+        }
+
+        .markdown-content a {
+            color: #667eea;
+            text-decoration: none;
+        }
+
+        .markdown-content a:hover {
+            text-decoration: underline;
+        }
+
+        .markdown-content table {
+            border-collapse: collapse;
+            margin: 0.5em 0;
+            width: 100%;
+        }
+
+        .markdown-content th,
+        .markdown-content td {
+            border: 1px solid #ddd;
+            padding: 0.5em;
+            text-align: left;
+        }
+
+        .markdown-content th {
+            background: #f5f5f5;
+            font-weight: 600;
+        }
+
+        .markdown-content img {
+            max-width: 100%;
+            height: auto;
+            border-radius: 4px;
+        }
+
+        .markdown-content hr {
+            border: none;
+            border-top: 1px solid #ddd;
+            margin: 1em 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🔌 WebSocket 调试工具</h1>
+        </div>
+
+        <div class="main-grid">
+            <!-- Left Panel - Connection Settings -->
+            <div class="panel">
+                <div class="panel-header">
+                    <span>连接设置</span>
+                </div>
+                <div class="panel-body">
+                    <div class="connection-form">
+                        <div class="form-group">
+                            <label>服务器地址</label>
+                            <input type="text" id="serverUrl" value="ws://49.233.105.26:8088" placeholder="ws://49.233.105.26:8088">
+                        </div>
+
+                        <input type="hidden" id="clientType" value="app">
+
+                        <div class="form-group">
+                            <label>Client ID</label>
+                            <input type="text" id="clientId" placeholder="自动生成">
+                        </div>
+
+                        <div class="form-group">
+                            <label>User ID</label>
+                            <input type="text" id="userId" value="user_001">
+                        </div>
+
+                        <div class="form-group">
+                            <label>Session ID</label>
+                            <input type="text" id="sessionId" value="session_001">
+                        </div>
+
+                        <div id="connectionStatus" class="status disconnected">
+                            <span class="status-dot"></span>
+                            <span class="status-text">未连接</span>
+                        </div>
+
+                        <button id="connectBtn" class="btn btn-primary" onclick="toggleConnection()">
+                            连接
+                        </button>
+                    </div>
+
+                    <!-- Stats -->
+                    <div class="stats">
+                        <div class="stat-item">
+                            <div class="stat-value" id="sentCount">0</div>
+                            <div class="stat-label">已发送</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-value" id="receivedCount">0</div>
+                            <div class="stat-label">已接收</div>
+                        </div>
+                    </div>
+
+                    <!-- Quick Actions -->
+                    <div class="quick-actions">
+                        <button class="quick-btn" onclick="sendHeartbeat()">💓 心跳</button>
+                        <button class="quick-btn" onclick="clearMessages()">🗑️ 清空</button>
+                        <button class="quick-btn" onclick="exportMessages()">📥 导出</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Right Panel - Messages & Tools -->
+            <div class="panel right-panel">
+                <div class="tabs">
+                    <div class="tab active" onclick="switchTab('messages')">消息</div>
+                    <div class="tab" onclick="switchTab('json')">JSON 编辑器</div>
+                </div>
+
+                <!-- Messages Tab -->
+                <div id="messagesTab" class="tab-content active">
+                    <div id="messagesContainer" class="messages-container"></div>
+                    <div class="input-area">
+                        <div class="message-type-selector">
+                            <button class="type-btn active" data-type="text" onclick="selectMessageType('text')">📝 文本</button>
+                            <button class="type-btn" data-type="tool_call" onclick="selectMessageType('tool_call')">🔧 工具调用</button>
+                            <button class="type-btn" data-type="file" onclick="selectMessageType('file')">📁 文件</button>
+                        </div>
+
+                        <!-- Tool Call Form -->
+                        <div id="toolForm" class="tool-form">
+                            <input type="text" id="toolName" placeholder="工具名称 (如: search, calculate)">
+                            <input type="text" id="toolParams" placeholder='参数 JSON (如: {"query": "hello"})'>
+                        </div>
+
+                        <div class="input-row">
+                            <textarea id="messageInput" rows="3" placeholder="输入消息内容..."></textarea>
+                            <button class="btn btn-success" onclick="sendMessage()">发送</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- JSON Editor Tab -->
+                <div id="jsonTab" class="tab-content">
+                    <div class="json-editor">
+                        <textarea id="jsonEditor" placeholder='{
+  "type": "text",
+  "content": {"text": "Hello"}
+}'></textarea>
+                        <div style="margin-top: 10px; display: flex; gap: 10px;">
+                            <button class="btn btn-primary" onclick="sendJsonMessage()">发送 JSON</button>
+                            <button class="btn btn-secondary" onclick="formatJson()">格式化</button>
+                            <button class="btn btn-secondary" onclick="loadTemplate()">加载模板</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast Container -->
+    <div id="toast" class="toast"></div>
+
+    <script>
+        // State
+        let ws = null;
+        let sentCount = 0;
+        let receivedCount = 0;
+        let currentMessageType = 'text';
+        let messages = [];
+
+        // Configure marked.js (note: highlight option is deprecated in marked 5.0+)
+        // We'll handle code highlighting separately if needed
+        marked.setOptions({
+            breaks: true,
+            gfm: true
+        });
+
+        // Generate random ID
+        function generateId() {
+            return 'client_' + Math.random().toString(36).substr(2, 9);
+        }
+
+        // Generate message ID
+        function generateMessageId() {
+            return 'msg_' + Date.now() + '_' + Math.random().toString(36).substr(2, 4);
+        }
+
+        // Initialize
+        document.addEventListener('DOMContentLoaded', () => {
+            document.getElementById('clientId').value = generateId();
+        });
+
+        // Toggle connection
+        function toggleConnection() {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                disconnect();
+            } else {
+                connect();
+            }
+        }
+
+        // Connect WebSocket
+        function connect() {
+            const serverUrl = document.getElementById('serverUrl').value;
+            const clientType = document.getElementById('clientType').value;
+            const clientId = document.getElementById('clientId').value || generateId();
+            const userId = document.getElementById('userId').value;
+            const sessionId = document.getElementById('sessionId').value;
+
+            // Update client ID if it was empty
+            document.getElementById('clientId').value = clientId;
+
+            const wsUrl = `${serverUrl}/ws/${clientType}?client_id=${clientId}&user_id=${userId}&session_id=${sessionId}`;
+
+            updateStatus('connecting');
+
+            try {
+                ws = new WebSocket(wsUrl);
+
+                ws.onopen = () => {
+                    updateStatus('connected');
+                    showToast('连接成功！', 'success');
+                    document.getElementById('connectBtn').textContent = '断开';
+                    document.getElementById('connectBtn').classList.remove('btn-primary');
+                    document.getElementById('connectBtn').classList.add('btn-danger');
+                };
+
+                ws.onmessage = (event) => {
+                    handleMessage(event);
+                };
+
+                ws.onerror = (error) => {
+                    showToast('连接错误！', 'error');
+                    console.error('WebSocket error:', error);
+                };
+
+                ws.onclose = () => {
+                    updateStatus('disconnected');
+                    document.getElementById('connectBtn').textContent = '连接';
+                    document.getElementById('connectBtn').classList.remove('btn-danger');
+                    document.getElementById('connectBtn').classList.add('btn-primary');
+                    showToast('连接已断开', 'info');
+                };
+
+            } catch (error) {
+                showToast('连接失败: ' + error.message, 'error');
+                updateStatus('disconnected');
+            }
+        }
+
+        // Disconnect
+        function disconnect() {
+            if (ws) {
+                ws.close();
+                ws = null;
+            }
+        }
+
+        // Handle incoming message
+        function handleMessage(event) {
+            try {
+                const data = JSON.parse(event.data);
+                receivedCount++;
+                document.getElementById('receivedCount').textContent = receivedCount;
+
+                // 根据 client_type 决定消息方向
+                // client_type = 1 代表用户发送的消息（右侧），= 2 代表 Agent 回复（左侧）
+                const direction = data.client_type === 1 ? 'sent' : 'received';
+
+                console.log('Received message:', data.type, data);
+
+                addMessage(data, direction);
+                messages.push({ direction: direction, data, time: new Date() });
+
+            } catch (error) {
+                console.error('handleMessage error:', error, 'raw data:', event.data);
+                addMessage({ type: 'error', content: { text: '消息处理错误: ' + error.message } }, 'received');
+            }
+        }
+
+        // Update connection status
+        function updateStatus(status) {
+            const statusEl = document.getElementById('connectionStatus');
+            statusEl.className = 'status ' + status;
+
+            const textMap = {
+                'disconnected': '未连接',
+                'connecting': '连接中...',
+                'connected': '已连接'
+            };
+            statusEl.querySelector('.status-text').textContent = textMap[status];
+        }
+
+        // Escape HTML for safe display (must be defined before renderMarkdown)
+        function escapeHtml(text) {
+            if (text === null || text === undefined) {
+                return '';
+            }
+            const div = document.createElement('div');
+            div.textContent = String(text);
+            return div.innerHTML;
+        }
+
+        // Render markdown content
+        function renderMarkdown(text) {
+            if (typeof text !== 'string') {
+                text = String(text);
+            }
+            if (!text) return '';
+            try {
+                if (typeof marked !== 'undefined' && marked.parse) {
+                    return marked.parse(text);
+                } else {
+                    return escapeHtml(text).replace(/\n/g, '<br>');
+                }
+            } catch (e) {
+                console.error('Markdown render error:', e);
+                return escapeHtml(text).replace(/\n/g, '<br>');
+            }
+        }
+
+        // Add message to container
+        function addMessage(data, direction) {
+            console.log('addMessage called:', data.type, direction);
+
+            try {
+                const container = document.getElementById('messagesContainer');
+                if (!container) {
+                    console.error('messagesContainer not found');
+                    return;
+                }
+
+                const msgEl = document.createElement('div');
+                msgEl.className = `message ${direction}`;
+
+                const time = new Date().toLocaleTimeString();
+                const typeClass = `type-${data.type || 'text'}`;
+
+                // 解析 content 字段（可能是 JSON 字符串）
+                let content = data.content;
+                if (typeof content === 'string') {
+                    try {
+                        content = JSON.parse(content);
+                    } catch (e) {
+                        // 如果解析失败，保持原样
+                    }
+                }
+
+                console.log('Processing content:', data.type, content);
+
+                let contentHtml = '';
+                if (data.type === 'text' || !data.type) {
+                    // Use markdown rendering for text messages
+                    let textContent = '';
+                    if (content && typeof content === 'object' && content.text) {
+                        textContent = content.text;
+                    } else if (typeof content === 'string') {
+                        textContent = content;
+                    } else {
+                        textContent = JSON.stringify(content);
+                    }
+                    contentHtml = `<div class="markdown-content">${renderMarkdown(textContent)}</div>`;
+                } else if (data.type === 'agent_result') {
+                    // Agent 完整响应（包含工具调用信息）
+                    const resultText = content?.result || '';
+                    const source = content?.source || '';
+                    const skillName = content?.skill_name || '';
+                    const toolsCalled = content?.tools_called || [];
+                    const iterations = content?.iterations || 0;
+
+                    console.log('agent_result:', { resultText, source, skillName, toolsCalled, iterations });
+
+                    // 渲染主结果（markdown）
+                    contentHtml = `<div class="markdown-content">${renderMarkdown(resultText)}</div>`;
+
+                    // 来源标签
+                    if (source === 'skill' && skillName) {
+                        contentHtml += `<div class="agent-meta"><span>🎯 Skill: ${escapeHtml(skillName)}</span></div>`;
+                    }
+
+                    // 工具调用信息
+                    if (Array.isArray(toolsCalled) && toolsCalled.length > 0) {
+                        contentHtml += `<details class="tool-calls-info"><summary>🔧 调用了 ${toolsCalled.length} 个工具${iterations > 0 ? ` (${iterations} 轮迭代)` : ''}</summary>`;
+                        toolsCalled.forEach(tc => {
+                            const statusClass = tc && tc.success ? 'success' : 'failed';
+                            const statusIcon = tc && tc.success ? '✅' : '❌';
+                            const toolName = tc && tc.tool_name ? tc.tool_name : 'unknown';
+                            const paramsStr = tc && tc.parameters ? JSON.stringify(tc.parameters, null, 2) : '{}';
+                            const resultPreview = tc && tc.result ? (tc.result.length > 100 ? tc.result.substring(0, 100) + '...' : tc.result) : '';
+                            const reasoning = tc && tc.reasoning ? tc.reasoning : '';
+                            contentHtml += `
+                            <div class="tool-call-item ${statusClass}">
+                                <div class="tool-name">${statusIcon} ${escapeHtml(toolName)}</div>
+                                ${reasoning ? `<div style="color:#888;font-size:0.8rem;">${escapeHtml(reasoning)}</div>` : ''}
+                                <div class="tool-params">${escapeHtml(paramsStr)}</div>
+                                ${resultPreview ? `<div class="tool-result">${escapeHtml(resultPreview)}</div>` : ''}
+                            </div>`;
+                        });
+                        contentHtml += `</details>`;
+                    }
+                } else if (data.type === 'status') {
+                    contentHtml = `<strong>${escapeHtml(content?.status || '')}</strong>: ${escapeHtml(content?.message || '')}`;
+                } else if (data.type === 'tool_call') {
+                    const paramsStr = JSON.stringify(content?.parameters, null, 2);
+                    contentHtml = `<strong>${escapeHtml(content?.tool_name || '')}</strong><br><pre><code>${escapeHtml(paramsStr)}</code></pre>`;
+                } else if (data.type === 'tool_result') {
+                    const resultStr = JSON.stringify(content?.result, null, 2);
+                    contentHtml = `<strong>${escapeHtml(content?.tool_name || '')}</strong><br><pre><code>${escapeHtml(resultStr)}</code></pre>`;
+                } else if (data.type === 'error') {
+                    contentHtml = `❌ ${escapeHtml(content?.message || JSON.stringify(content))}`;
+                } else {
+                    const jsonStr = JSON.stringify(content, null, 2);
+                    contentHtml = `<pre><code>${escapeHtml(jsonStr)}</code></pre>`;
+                }
+
+                msgEl.innerHTML = `
+                <span class="message-type ${typeClass}">${escapeHtml(data.type || 'text')}</span>
+                <div class="message-bubble">
+                    <div>${contentHtml}</div>
+                </div>
+                <div class="message-meta">
+                    ${time} ${data.from ? `| from: ${data.from}` : ''}
+                </div>
+            `;
+
+                container.appendChild(msgEl);
+                container.scrollTop = container.scrollHeight;
+
+                console.log('Message added successfully');
+
+            } catch (error) {
+                console.error('addMessage error:', error);
+            }
+        }
+
+        // Select message type
+        function selectMessageType(type) {
+            currentMessageType = type;
+            document.querySelectorAll('.type-btn').forEach(btn => {
+                btn.classList.toggle('active', btn.dataset.type === type);
+            });
+
+            // Show/hide tool form
+            document.getElementById('toolForm').classList.toggle('active', type === 'tool_call');
+        }
+
+        // Send message
+        function sendMessage() {
+            if (!ws || ws.readyState !== WebSocket.OPEN) {
+                showToast('请先连接服务器', 'error');
+                return;
+            }
+
+            const sessionId = document.getElementById('sessionId').value;
+            const clientId = document.getElementById('clientId').value;
+            const input = document.getElementById('messageInput').value;
+
+            let content;
+            let type = currentMessageType;
+
+            if (type === 'text') {
+                content = { text: input };
+            } else if (type === 'tool_call') {
+                const toolName = document.getElementById('toolName').value;
+                let params = {};
+                try {
+                    params = JSON.parse(document.getElementById('toolParams').value || '{}');
+                } catch (e) {
+                    showToast('参数 JSON 格式错误', 'error');
+                    return;
+                }
+                content = { tool_name: toolName, parameters: params };
+            } else if (type === 'file') {
+                content = { name: 'test.txt', type: 'text/plain', size: input.length, content: btoa(input) };
+            }
+
+            const message = {
+                id: generateMessageId(),
+                type: type,
+                from: clientId,
+                session_id: sessionId,
+                timestamp: Math.floor(Date.now() / 1000),
+                content: content
+            };
+
+            ws.send(JSON.stringify(message));
+
+            sentCount++;
+            document.getElementById('sentCount').textContent = sentCount;
+            addMessage(message, 'sent');
+            messages.push({ direction: 'sent', data: message, time: new Date() });
+
+            document.getElementById('messageInput').value = '';
+        }
+
+        // Send JSON message
+        function sendJsonMessage() {
+            if (!ws || ws.readyState !== WebSocket.OPEN) {
+                showToast('请先连接服务器', 'error');
+                return;
+            }
+
+            const jsonStr = document.getElementById('jsonEditor').value;
+            try {
+                const data = JSON.parse(jsonStr);
+
+                // Add required fields if missing
+                if (!data.id) data.id = generateMessageId();
+                if (!data.timestamp) data.timestamp = Math.floor(Date.now() / 1000);
+                if (!data.from) data.from = document.getElementById('clientId').value;
+                if (!data.session_id) data.session_id = document.getElementById('sessionId').value;
+
+                ws.send(JSON.stringify(data));
+
+                sentCount++;
+                document.getElementById('sentCount').textContent = sentCount;
+                addMessage(data, 'sent');
+                messages.push({ direction: 'sent', data, time: new Date() });
+
+                showToast('消息已发送', 'success');
+            } catch (error) {
+                showToast('JSON 格式错误: ' + error.message, 'error');
+            }
+        }
+
+        // Format JSON
+        function formatJson() {
+            const editor = document.getElementById('jsonEditor');
+            try {
+                const data = JSON.parse(editor.value);
+                editor.value = JSON.stringify(data, null, 2);
+            } catch (error) {
+                showToast('JSON 格式错误', 'error');
+            }
+        }
+
+        // Load template
+        function loadTemplate() {
+            const templates = {
+                text: {
+                    type: "text",
+                    content: { text: "Hello, this is a test message" }
+                },
+                tool_call: {
+                    type: "tool_call",
+                    content: {
+                        tool_name: "search",
+                        parameters: { query: "search query here" }
+                    }
+                },
+                tool_result: {
+                    type: "tool_result",
+                    content: {
+                        tool_name: "search",
+                        result: { items: ["result1", "result2"] },
+                        error: ""
+                    }
+                },
+                file: {
+                    type: "file",
+                    content: {
+                        name: "test.txt",
+                        type: "text/plain",
+                        size: 100,
+                        content: "base64_encoded_content"
+                    }
+                }
+            };
+
+            const type = prompt('选择模板类型:\n1. text\n2. tool_call\n3. tool_result\n4. file', 'text');
+            if (templates[type]) {
+                document.getElementById('jsonEditor').value = JSON.stringify(templates[type], null, 2);
+            }
+        }
+
+        // Send heartbeat
+        function sendHeartbeat() {
+            if (!ws || ws.readyState !== WebSocket.OPEN) {
+                showToast('请先连接服务器', 'error');
+                return;
+            }
+
+            const message = {
+                id: generateMessageId(),
+                type: 'heartbeat',
+                from: document.getElementById('clientId').value,
+                session_id: document.getElementById('sessionId').value,
+                timestamp: Math.floor(Date.now() / 1000),
+                content: { timestamp: Math.floor(Date.now() / 1000) }
+            };
+
+            ws.send(JSON.stringify(message));
+            showToast('心跳已发送', 'info');
+        }
+
+        // Clear messages
+        function clearMessages() {
+            document.getElementById('messagesContainer').innerHTML = '';
+            messages = [];
+            showToast('消息已清空', 'info');
+        }
+
+        // Export messages
+        function exportMessages() {
+            const data = JSON.stringify(messages, null, 2);
+            const blob = new Blob([data], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `websocket_messages_${Date.now()}.json`;
+            a.click();
+            URL.revokeObjectURL(url);
+            showToast('消息已导出', 'success');
+        }
+
+        // Switch tab
+        function switchTab(tabName) {
+            document.querySelectorAll('.tab').forEach(tab => tab.classList.remove('active'));
+            document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
+
+            document.querySelector(`.tab:nth-child(${tabName === 'messages' ? 1 : 2})`).classList.add('active');
+            document.getElementById(tabName + 'Tab').classList.add('active');
+        }
+
+        // Show toast notification
+        function showToast(message, type = 'info') {
+            const toast = document.getElementById('toast');
+            toast.textContent = message;
+            toast.className = `toast ${type} show`;
+
+            setTimeout(() => {
+                toast.classList.remove('show');
+            }, 3000);
+        }
+
+        // Keyboard shortcuts
+        document.addEventListener('keydown', (e) => {
+            // Ctrl+Enter to send JSON
+            if (e.ctrlKey && e.key === 'Enter') {
+                if (document.getElementById('jsonTab').classList.contains('active')) {
+                    e.preventDefault();
+                    sendJsonMessage();
+                }
+            }
+
+            // Enter to send message (Shift+Enter for newline)
+            if (e.key === 'Enter' && !e.shiftKey && !e.ctrlKey) {
+                if (document.getElementById('messagesTab').classList.contains('active')) {
+                    const messageInput = document.getElementById('messageInput');
+                    if (document.activeElement === messageInput) {
+                        e.preventDefault();
+                        sendMessage();
+                    }
+                }
+            }
+        });
+    </script>
+</body>
+</html>

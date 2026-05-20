@@ -22,11 +22,28 @@ from .context import ContextManager
 from .llm_client import LLMClientFactory, LLMResponse
 from ..config import Config
 
+# 导入 Skill 系统
+from ..skills import (
+    Skill,
+    SkillLoader,
+    SkillRegistry,
+    SkillRouter,
+    SkillExecutor,
+    SkillContext,
+    SkillResult
+)
+
+# 导入 MCP 系统
+from ..mcp import (
+    MCPClient,
+    MCPToolRegistry
+)
+
 
 class AgentState(Enum):
     """
     Agent状态枚举
-    
+
     定义Agent在执行过程中可能处于的状态
     这有助于我们理解Agent的执行流程
     """
@@ -35,6 +52,65 @@ class AgentState(Enum):
     ACTING = "acting"          # 行动状态，正在执行工具
     COMPLETED = "completed"    # 完成状态，任务已完成
     FAILED = "failed"          # 失败状态，任务执行失败
+
+
+@dataclass
+class ToolCall:
+    """
+    工具调用记录
+
+    记录一次工具调用的完整信息
+    """
+    tool_name: str              # 工具名称
+    parameters: Dict[str, Any]  # 调用参数
+    result: str                 # 执行结果
+    reasoning: str = ""         # 调用理由
+    success: bool = True        # 是否成功
+
+
+@dataclass
+class AgentResult:
+    """
+    Agent 执行结果
+
+    包含完整的执行信息，便于调试和展示
+    """
+    result: str                         # 最终结果
+    success: bool = True                # 是否成功
+    source: str = "agent_loop"          # 来源: "skill", "agent_loop", "mcp"
+    skill_name: str = ""                # 如果来自 Skill
+    tools_called: List[ToolCall] = None # 调用的工具列表
+    iterations: int = 0                 # 迭代次数
+    error: str = ""                     # 错误信息
+
+    def __post_init__(self):
+        if self.tools_called is None:
+            self.tools_called = []
+
+    def to_dict(self) -> Dict[str, Any]:
+        """转换为字典格式"""
+        return {
+            "result": self.result,
+            "success": self.success,
+            "source": self.source,
+            "skill_name": self.skill_name,
+            "tools_called": [
+                {
+                    "tool_name": tc.tool_name,
+                    "parameters": tc.parameters,
+                    "result": tc.result[:500] + "..." if len(tc.result) > 500 else tc.result,
+                    "reasoning": tc.reasoning,
+                    "success": tc.success
+                }
+                for tc in self.tools_called
+            ],
+            "iterations": self.iterations,
+            "error": self.error
+        }
+
+    def __str__(self) -> str:
+        """字符串表示，直接返回结果"""
+        return self.result
 
 
 @dataclass
@@ -77,11 +153,12 @@ class Agent:
         tools: Optional[List[Any]] = None,
         memory: Optional[Memory] = None,
         context_manager: Optional[ContextManager] = None,
-        config: Optional[Config] = None
+        config: Optional[Config] = None,
+        skill_dirs: Optional[List[str]] = None
     ):
         """
         初始化Agent
-        
+
         参数说明：
             name (str): Agent的名字，用于日志和显示
             max_iterations (int): 最大迭代次数，防止无限循环
@@ -90,7 +167,8 @@ class Agent:
             memory (Memory): 记忆系统实例
             context_manager (ContextManager): 上下文管理器实例
             config (Config): 配置管理器实例
-        
+            skill_dirs (List[str]): Skill 目录列表，用于加载用户自定义 Skill
+
         设计说明：
             - 使用依赖注入模式，便于测试和扩展
             - 提供默认值，简化使用
@@ -99,29 +177,33 @@ class Agent:
         # 基本信息
         self.name = name
         self.max_iterations = max_iterations
-        
+
         # 核心组件
         self.llm_client = llm_client
         self.tools = tools or []
         self.memory = memory or Memory()
         self.context_manager = context_manager or ContextManager()
-        
+
         # 状态管理
         self.state = AgentState.IDLE
         self.current_task = None
         self.iteration_count = 0
-        
+        self._tools_called: List[ToolCall] = []  # 执行轨迹：记录调用的工具
+
         # 配置管理
-        self.config = config or Config()
-        
+        self.config = config or Config(config_file="../config.json")
+
         # 如果没有提供llm_client，从配置创建
         if not self.llm_client:
             self._init_llm_client()
+
+        # 初始化 Skill 系统
+        self._init_skill_system(skill_dirs)
     
     def _init_llm_client(self):
         """
         从配置初始化LLM客户端
-        
+
         功能：
         1. 从配置中读取LLM配置
         2. 使用工厂模式创建客户端
@@ -137,50 +219,287 @@ class Agent:
                 # Ollama专用配置
                 "base_url": self.config.get("llm.base_url", "http://localhost:11434")
             }
-            
+
             # 验证API Key（Ollama除外）
             if llm_config["provider"] != "ollama" and not llm_config["api_key"]:
                 print("⚠️ 未配置LLM API Key，使用模拟模式")
                 self.llm_client = None
                 return
-            
+
             # 创建客户端
             self.llm_client = LLMClientFactory.create(llm_config)
             print(f"✅ LLM客户端初始化成功: {llm_config['provider']} - {llm_config['model']}")
-            
+
         except Exception as e:
             print(f"⚠️ LLM客户端初始化失败: {str(e)}")
             self.llm_client = None
+
+    def _init_skill_system(self, skill_dirs: Optional[List[str]] = None):
+        """
+        初始化 Skill 系统
+
+        参数：
+            skill_dirs (List[str]): Skill 目录列表
+
+        功能：
+        1. 创建 Skill 注册器、加载器、路由器、执行器
+        2. 从配置中获取 skill_dirs（如果未显式提供）
+        3. 加载所有 Skill
+        4. 初始化路由器
+        """
+        self.skill_registry = SkillRegistry()
+        self.skill_loader = SkillLoader()
+
+        # 获取 skill_dirs：优先使用参数，其次从配置读取
+        if skill_dirs is None:
+            config_dirs = self.config.get("skill_dirs", [])
+            if isinstance(config_dirs, str):
+                config_dirs = [config_dirs]
+            skill_dirs = config_dirs
+
+        # 加载 Skills
+        if skill_dirs:
+            skills = self.skill_loader.load_from_directories(skill_dirs)
+            for skill in skills:
+                self.skill_registry.register(skill)
+
+            if skills:
+                print(f"✅ 已加载 {len(skills)} 个 Skill")
+            else:
+                print("ℹ️ 未找到任何 Skill 文件")
+
+        # 创建执行器（在加载 Skills 之后，传入 skill_registry 以支持 list_skills）
+        self.skill_executor = SkillExecutor(
+            tool_registry=self.tools,
+            llm_client=self.llm_client,
+            memory=self.memory,
+            context_manager=self.context_manager,
+            skill_registry=self.skill_registry
+        )
+
+        # 初始化路由器
+        self.skill_router = SkillRouter(self.skill_registry.get_all())
+
+        # 初始化 MCP 系统（默认为 None，可通过 connect_mcp 连接）
+        self.mcp_client: Optional[MCPClient] = None
+        self.mcp_tool_registry: Optional[MCPToolRegistry] = None
+
+    async def connect_mcp_stdio(
+        self,
+        server_name: str,
+        command: str,
+        args: Optional[List[str]] = None,
+        env: Optional[Dict[str, str]] = None
+    ) -> bool:
+        """
+        连接 MCP 服务器（stdio 方式）
+
+        参数：
+            server_name: 服务器名称
+            command: 启动命令
+            args: 命令参数
+            env: 环境变量
+
+        返回：
+            bool: 是否成功连接
+        """
+        if not self.mcp_client:
+            self.mcp_client = MCPClient()
+
+        success = await self.mcp_client.connect_stdio(
+            server_name, command, args, env
+        )
+
+        if success:
+            # 自动注册 MCP 工具
+            self._register_mcp_tools()
+
+        return success
+
+    async def connect_mcp_http(
+        self,
+        server_name: str,
+        base_url: str,
+        headers: Optional[Dict[str, str]] = None
+    ) -> bool:
+        """
+        连接 MCP 服务器（HTTP 方式）
+
+        参数：
+            server_name: 服务器名称
+            base_url: MCP 服务器 URL
+            headers: HTTP 请求头
+
+        返回：
+            bool: 是否成功连接
+        """
+        if not self.mcp_client:
+            self.mcp_client = MCPClient()
+
+        success = await self.mcp_client.connect_http(
+            server_name, base_url, headers
+        )
+
+        if success:
+            # 自动注册 MCP 工具
+            self._register_mcp_tools()
+
+        return success
+
+    def _register_mcp_tools(self):
+        """
+        注册 MCP 工具到工具列表
+        """
+        if not self.mcp_client:
+            return
+
+        if not self.mcp_tool_registry:
+            self.mcp_tool_registry = MCPToolRegistry(self.mcp_client)
+
+        # 注册所有 MCP 工具
+        # 注意：这里使用简单的列表方式，而非 ToolRegistry
+        all_tools = self.mcp_client.get_all_tools()
+        for server_name, tools in all_tools.items():
+            for tool_def in tools:
+                from ..mcp import MCPToolAdapter
+                adapter = MCPToolAdapter(
+                    self.mcp_client,
+                    server_name,
+                    tool_def
+                )
+                self.tools.append(adapter)
+
+        total_tools = sum(len(t) for t in all_tools.values())
+        if total_tools > 0:
+            print(f"✅ 已注册 {total_tools} 个 MCP 工具")
+
+    def list_mcp_servers(self) -> List[str]:
+        """
+        列出已连接的 MCP 服务器
+
+        返回：
+            List[str]: 服务器名称列表
+        """
+        if not self.mcp_client:
+            return []
+        return self.mcp_client.list_servers()
+
+    def list_mcp_tools(self) -> Dict[str, List]:
+        """
+        列出所有 MCP 工具
+
+        返回：
+            Dict[str, List]: {server_name: [tools]}
+        """
+        if not self.mcp_client:
+            return {}
+        return self.mcp_client.get_all_tools()
+
+    async def disconnect_mcp(self, server_name: Optional[str] = None):
+        """
+        断开 MCP 连接
+
+        参数：
+            server_name: 服务器名称（可选，不提供则断开所有）
+        """
+        if not self.mcp_client:
+            return
+
+        if server_name:
+            await self.mcp_client.disconnect(server_name)
+        else:
+            await self.mcp_client.disconnect_all()
+            self.mcp_client = None
+            self.mcp_tool_registry = None
         
-    def run(self, task: str) -> str:
+    def run(self, task: str) -> AgentResult:
         """
         执行主循环 - Agent的核心方法
         这是Agent Loop的入口点，实现了完整的思考-行动循环。
+
         参数：
             task (str): 用户交给Agent的任务描述
+
         返回：
-            str: 任务执行的最终结果
-            
+            AgentResult: 包含执行结果、调用工具、来源等完整信息
+
         执行流程：
-        1. 初始化任务状态
-        2. 进入循环（最多max_iterations次）
-        3. 每次循环：
-           - 思考：分析当前状态
-           - 决策：选择下一步行动
-           - 行动：执行工具
-           - 观察：记录结果
+        1. 尝试路由到 Skill（如果匹配）
+        2. 如果匹配 Skill，执行 Skill SOP
+        3. 如果无匹配 Skill，进入普通 Agent Loop
         4. 判断是否完成或失败
-        5. 返回最终结果
-        
+        5. 返回 AgentResult
+
         学习重点：
         - 注意循环的终止条件
         - 理解每次迭代的输入输出
         - 观察如何记录和更新状态
-         ？ 如何控制工具
+        """
+        # 重置执行轨迹
+        self._tools_called = []
+        self.iteration_count = 0
+
+        # 尝试路由到 Skill
+        skill, cleaned_input, confidence = self.skill_router.route(task)
+
+        if skill and confidence > 0:
+            print(f"🎯 匹配到 Skill: {skill.meta.name} (置信度: {confidence:.2f})")
+
+            # 构建 Skill 执行上下文
+            context = SkillContext(
+                tool_registry=self.tools,
+                llm_client=self.llm_client,
+                memory=self.memory,
+                context_manager=self.context_manager,
+                user_input=task
+            )
+
+            # 执行 Skill
+            result = self.skill_executor.execute(skill, cleaned_input, context)
+
+            if result.success:
+                # 将 Skill 执行轨迹中的工具调用转为 ToolCall
+                for trace_item in result.execution_trace:
+                    if trace_item.get("step") == "tool_call":
+                        self._tools_called.append(ToolCall(
+                            tool_name=trace_item.get("tool", ""),
+                            parameters={},
+                            result=str(trace_item.get("success", "")),
+                            success=trace_item.get("success", False)
+                        ))
+
+                return AgentResult(
+                    result=self._format_skill_result(result),
+                    success=True,
+                    source="skill",
+                    skill_name=skill.meta.name,
+                    tools_called=self._tools_called
+                )
+            else:
+                return AgentResult(
+                    result=f"Skill 执行失败: {result.error}",
+                    success=False,
+                    source="skill",
+                    skill_name=skill.meta.name,
+                    error=result.error or ""
+                )
+
+        # 无匹配 Skill，走普通 Agent Loop
+        return self._run_agent_loop(task)
+
+    def _run_agent_loop(self, task: str) -> AgentResult:
+        """
+        执行普通 Agent Loop
+
+        参数：
+            task (str): 用户任务
+
+        返回：
+            AgentResult: 执行结果
         """
         # 初始化任务
         self._initialize_task(task)
-        
+
         # 主循环：Agent Loop的核心
         while self._should_continue():
             # 记录迭代次数
@@ -232,20 +551,21 @@ class Agent:
         self.current_task = task
         self.state = AgentState.IDLE
         self.iteration_count = 0
-        
-        # 清空上下文（保留记忆）
-        self.context_manager.clear_context(True)
-        
-        # 记录任务到记忆系统
+
+        # 清空上下文（包括优先级消息，确保新任务从头开始）
+        # 注意：memory（长期记忆）保留，但 context（当前上下文）完全清空
+        self.context_manager.clear_context(keep_priority=False)
+
+        # 记录任务到记忆系统（长期存储）
         self.memory.save_message("user", task)
-        
+
         # 添加系统提示到上下文
         system_prompt = self._build_system_prompt()
         self.context_manager.add_message("system", system_prompt)
-        
+
         # 添加用户任务到上下文
         self.context_manager.add_message("user", task)
-        
+
         print(f"✅ 任务已初始化: {task[:50]}...")
     
     def _should_continue(self) -> bool:
@@ -301,33 +621,40 @@ class Agent:
         - 结构化输出的处理
         """
         print(f"\n🤔 思考中... (迭代 {self.iteration_count})")
-        
+
         # 1. 准备上下文
         messages = self.context_manager.get_context()
-        
+
+        # 调试：打印当前上下文
+        print(f"[DEBUG] 当前上下文消息数: {len(messages)}")
+        for i, msg in enumerate(messages):
+            content_preview = msg.get('content', '')[:100] + "..." if len(msg.get('content', '')) > 100 else msg.get('content', '')
+            print(f"  [{i}] {msg.get('role')}: {content_preview}")
+
         # 2. 调用LLM
         response = self._call_llm(messages)
-        
+
         # 3. 解析响应
         action = self._parse_response_to_action(response)
-        
+
         return action
     
     def _act(self, action: AgentAction) -> str:
         """
         行动步骤 - 执行工具
-        
+
         参数：
             action (AgentAction): 要执行的行动
-            
+
         返回：
             str: 执行结果
-            
+
         功能：
         1. 查找对应的工具
         2. 执行工具
-        3. 返回结果
-        
+        3. 记录工具调用轨迹
+        4. 返回结果
+
         设计思路：
         - 错误处理：工具不存在或执行失败
         - 日志记录：记录所有工具调用
@@ -336,23 +663,65 @@ class Agent:
         print(f"🔧 执行工具: {action.tool_name}")
         print(f"📝 参数: {action.parameters}")
         print(f"💭 理由: {action.reasoning}")
-        
+
         # 查找工具
         tool = self._find_tool(action.tool_name)
-        
+
         if tool is None:
             error_msg = f"工具 '{action.tool_name}' 不存在"
             print(f"❌ {error_msg}")
+            # 记录失败的工具调用
+            self._tools_called.append(ToolCall(
+                tool_name=action.tool_name,
+                parameters=action.parameters,
+                result=error_msg,
+                reasoning=action.reasoning,
+                success=False
+            ))
             return f"错误: {error_msg}"
-        
+
         # 执行工具
         try:
-            result = tool.execute(**action.parameters)
-            print(f"✅ 执行结果: {result[:100]}...")
-            return result
+            tool_result = tool.execute(**action.parameters)
+
+            # ToolResult 是一个 dataclass 对象，需要正确处理
+            if tool_result.success:
+                # 成功：返回结果内容
+                result_str = str(tool_result.result) if tool_result.result is not None else "执行成功"
+                print(f"✅ 执行结果: {result_str[:100]}...")
+                # 记录成功的工具调用
+                self._tools_called.append(ToolCall(
+                    tool_name=action.tool_name,
+                    parameters=action.parameters,
+                    result=result_str,
+                    reasoning=action.reasoning,
+                    success=True
+                ))
+                return result_str
+            else:
+                # 失败：返回错误信息
+                error_msg = tool_result.error or "工具执行失败"
+                print(f"❌ {error_msg}")
+                # 记录失败的工具调用
+                self._tools_called.append(ToolCall(
+                    tool_name=action.tool_name,
+                    parameters=action.parameters,
+                    result=error_msg,
+                    reasoning=action.reasoning,
+                    success=False
+                ))
+                return f"工具执行失败: {error_msg}"
         except Exception as e:
             error_msg = f"工具执行失败: {str(e)}"
             print(f"❌ {error_msg}")
+            # 记录异常的工具调用
+            self._tools_called.append(ToolCall(
+                tool_name=action.tool_name,
+                parameters=action.parameters,
+                result=error_msg,
+                reasoning=action.reasoning,
+                success=False
+            ))
             return error_msg
     
     def _observe(self, action: AgentAction, result: str):
@@ -463,7 +832,7 @@ class Agent:
 3. 执行工具并观察结果
 4. 继续下一步或完成任务
 
-输出格式要求（JSON）：
+输出格式要求（严格JSON）：
 {{
     "thinking": "你的思考过程",
     "action": "工具名称 或 finish（完成任务）",
@@ -471,36 +840,47 @@ class Agent:
     "reasoning": "选择这个行动的理由"
 }}
 
-重要提示：
-- action为"finish"时，parameters格式为：{{"result": "最终答案"}}
-- action为工具名称时，parameters必须按照该工具的参数定义提供
-- 仔细阅读工具的参数要求，确保参数格式正确
-- 如果没有合适的工具，说明原因并建议其他方案
-- 始终保持JSON格式输出
+【JSON格式严格规则】：
+1. 必须输出有效的JSON格式，不要输出任何JSON之外的内容
+2. 字符串中的特殊字符必须正确转义：
+   - 换行符使用 \\n
+   - 反斜杠使用 \\\\
+   - 双引号使用 \\"
+   - 制表符使用 \\t
+3. 不要在字符串中使用无效转义序列（如 \\以、\\*、\\@ 等）
+4. 如果内容包含特殊字符，确保转义后是有效的JSON
+5. action为"finish"时，parameters格式为：{{"result": "最终答案"}}
+6. action为工具名称时，parameters必须按照该工具的参数定义提供
+
+请严格遵循以上规则，确保输出的是可以被标准JSON解析器解析的有效JSON。
 """
         return system_prompt
     
-    def _call_llm(self, messages: List[Dict[str, str]]) -> str:
+    def _call_llm(self, messages: List[Dict[str, str]], use_structured_output: bool = True) -> str:
         """
         调用LLM（大语言模型）
 
         参数：
             messages (List[Dict]): 消息列表
                 格式：[{"role": "user/assistant/system", "content": "..."}]
+            use_structured_output (bool): 是否使用结构化输出（强制返回有效JSON）
         返回：
             str: LLM的响应文本（JSON格式）
         功能：
         1. 使用配置的LLM客户端调用API
-        2. 处理响应和错误
-        3. 记录token使用情况
+        2. 支持结构化输出，保证返回有效JSON
+        3. 处理响应和错误
+        4. 记录token使用情况
 
         设计思路：
         - 统一的调用接口
+        - 结构化输出优先，避免JSON解析问题
         - 自动重试机制（可选）
         - 详细的错误处理
 
         学习重点：
         - 理解LLM调用的输入输出
+        - 结构化输出的重要性
         - 注意错误处理
         - 了解token限制
         """
@@ -523,8 +903,29 @@ class Agent:
                 for msg in messages:
                     print(f"  [{msg['role']}]: {msg['content'][:100]}...")
 
+            # 准备调用参数
+            call_kwargs = {}
+
+            # 结构化输出：根据 LLM 提供商选择合适的方式
+            if use_structured_output:
+                provider = getattr(self.llm_client, '__class__', None).__name__ if self.llm_client else ""
+
+                if provider == "OpenAIClient":
+                    # OpenAI: 使用 json_object 模式（简单可靠）
+                    call_kwargs["response_format"] = {"type": "json_object"}
+                    print("📐 使用结构化输出: json_object 模式")
+
+                elif provider == "AnthropicClient":
+                    # Anthropic: 通过 system 提示强制 JSON 输出
+                    # (Anthropic 的 tool calling 更适合复杂场景)
+                    print("📐 使用结构化输出: 提示词约束模式")
+
+                elif provider == "OllamaClient":
+                    # Ollama: 通过提示词约束
+                    print("📐 使用结构化输出: 提示词约束模式")
+
             # 实际调用
-            response: LLMResponse = self.llm_client.call(messages)
+            response: LLMResponse = self.llm_client.call(messages, **call_kwargs)
 
             # 检查响应是否包含错误
             if response.content.startswith("Error:"):
@@ -546,6 +947,14 @@ class Agent:
                     f"(prompt: {response.usage['prompt_tokens']}, "
                     f"completion: {response.usage['completion_tokens']})"
                 )
+
+            # 检查响应内容是否为空
+            if not response.content or not response.content.strip():
+                print("⚠️ LLM返回空响应")
+                if self.config.get("debug", False) or self.config.get("allow_mock", False):
+                    print("⚠️ 降级使用模拟响应")
+                    return self._mock_llm_response()
+                raise RuntimeError("LLM返回空响应，请检查模型配置或API连接")
 
             # 返回响应内容
             return response.content
@@ -589,64 +998,75 @@ class Agent:
     def _parse_response_to_action(self, response: str) -> Optional[AgentAction]:
         """
         解析LLM响应，转换为Agent行动
-        
+
         参数：
             response (str): LLM的响应文本
-            
+
         返回：
             AgentAction: 解析后的行动对象，None表示任务完成
-            
+
         功能：
         1. 解析JSON格式的响应
         2. 提取工具名称、参数、理由
         3. 创建AgentAction对象
-        
+
         设计思路：
+        - 使用通用的 JSON 解析工具（支持自动修复）
         - 处理各种可能的错误情况
         - 提供详细的错误信息
         - 验证必需字段
-        
+
         学习重点：
         - 结构化输出的解析
         - 错误处理的重要性
         - 数据验证的必要性
         """
+        from .llm_client import safe_json_loads
+
+        print(f"[DEBUG] 原始响应长度: {len(response)}, 类型: {type(response)}")
+
+        # 使用通用 JSON 解析工具（自动修复 + 提取）
+        data, error = safe_json_loads(response)
+
+        if error:
+            print(f"❌ JSON解析失败: {error}")
+            print(f"[DEBUG] 响应前500字符: {response[:500]}")
+            return None
+
         try:
-            # 解析JSON
-            data = json.loads(response)
-            
+            print(f"[DEBUG] 解析成功, action={data.get('action')}")
             # 检查是否完成任务
             if data.get("action") == "finish":
-                result = data["parameters"].get("result", "任务完成")
+                result = data.get("parameters", {}).get("result", "任务完成")
+                print(f"[DEBUG~~~~~~~~~~~~~~~] <UNK>: {result}")
+                # 同时保存到 memory（长期存储）和 context（当前上下文）
                 self.memory.save_message("assistant", f"最终答案: {result}")
+                self.context_manager.add_message("assistant", result)
                 return None
-            
+
             # 创建AgentAction对象
             action = AgentAction(
                 tool_name=data.get("action"),
                 parameters=data.get("parameters", {}),
                 reasoning=data.get("reasoning", "")
             )
-            
+
             return action
-            
-        except json.JSONDecodeError as e:
-            print(f"❌ JSON解析失败: {e}")
-            return None
+
         except Exception as e:
             print(f"❌ 响应解析失败: {e}")
             return None
-    
+
     def _find_tool(self, tool_name: str) -> Optional[Any]:
         """
         查找工具
-        
+
         参数：
             tool_name (str): 工具名称
-            
+
         返回：
             Tool对象，如果未找到返回None
-            
+
         功能：
         根据名称在工具列表中查找对应的工具
         """
@@ -704,27 +1124,122 @@ class Agent:
         self.state = AgentState.FAILED
         self.memory.save_message("system", error_message)
     
-    def _get_final_result(self) -> str:
+    def _get_final_result(self) -> AgentResult:
         """
         获取最终结果
-        
+
         返回：
-            str: 任务执行的最终结果
-            
+            AgentResult: 包含完整执行信息的结果对象
+
         功能：
-        从记忆中提取最终结果，格式化输出
+        从记忆中提取最终结果，构建 AgentResult
         """
         if self.state == AgentState.COMPLETED:
             # 从 ContextManager 获取最后的消息
             context = self.context_manager.get_context()
+            result_text = "任务完成"
             if context:
                 # 获取最后的 assistant 消息
                 for msg in reversed(context):
                     if msg["role"] == "assistant":
-                        return msg["content"]
-            return "任务完成"
+                        result_text = msg["content"]
+                        break
+
+            return AgentResult(
+                result=result_text,
+                success=True,
+                source="agent_loop",
+                tools_called=self._tools_called,
+                iterations=self.iteration_count
+            )
         else:
-            return f"任务未完成。当前状态: {self.state.value}"
+            return AgentResult(
+                result=f"任务未完成。当前状态: {self.state.value}",
+                success=False,
+                source="agent_loop",
+                tools_called=self._tools_called,
+                iterations=self.iteration_count,
+                error=f"Agent 状态: {self.state.value}"
+            )
+
+    def _format_skill_result(self, result: SkillResult) -> str:
+        """
+        格式化 Skill 执行结果
+
+        参数：
+            result: Skill 执行结果
+
+        返回：
+            str: 格式化后的结果文本
+        """
+        if not result.success:
+            return f"Skill 执行失败: {result.error}"
+
+        # 根据输出格式处理
+        if result.output_format == "structured" and isinstance(result.result, dict):
+            import json
+            return json.dumps(result.result, ensure_ascii=False, indent=2)
+
+        # 默认返回文本
+        if result.result is not None:
+            return str(result.result)
+
+        return "Skill 执行完成"
+
+    def get_skill_context(self) -> SkillContext:
+        """
+        构建 Skill 执行上下文
+
+        返回：
+            SkillContext: 包含所有能力的上下文
+        """
+        return SkillContext(
+            tool_registry=self.tools,
+            llm_client=self.llm_client,
+            memory=self.memory,
+            context_manager=self.context_manager
+        )
+
+    def list_skills(self) -> List[Dict]:
+        """
+        列出所有已加载的 Skill
+
+        返回：
+            List[Dict]: Skill 信息列表
+        """
+        return self.skill_registry.list_skills()
+
+    def reload_skills(self, skill_dirs: Optional[List[str]] = None) -> int:
+        """
+        重新加载 Skills
+
+        参数：
+            skill_dirs: Skill 目录列表（可选，默认使用初始化时的目录）
+
+        返回：
+            int: 加载的 Skill 数量
+        """
+        if skill_dirs is None:
+            config_dirs = self.config.get("skill_dirs", [])
+            if isinstance(config_dirs, str):
+                config_dirs = [config_dirs]
+            skill_dirs = config_dirs
+
+        # 清空并重新加载
+        self.skill_registry.clear()
+        self.skill_loader.clear_loaded()
+
+        if skill_dirs:
+            skills = self.skill_loader.load_from_directories(skill_dirs)
+            for skill in skills:
+                self.skill_registry.register(skill)
+
+            # 更新路由器
+            self.skill_router.update_skills(self.skill_registry.get_all())
+
+            return len(skills)
+
+        return 0
 
 
 # 使用示例（详细注释）

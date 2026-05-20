@@ -25,12 +25,24 @@ data class Message(
     val timestamp: Long,
 
     @SerializedName("content")
-    val content: MessageContent
+    val content: MessageContent,
+
+    /**
+     * 客户端类型：1=用户发送的消息（右侧），2=Agent回复（左侧）
+     * 用于判断消息展示方向
+     */
+    @SerializedName("client_type")
+    val clientType: Int? = null
 ) {
     /**
      * 判断是否是自己发送的消息
+     * 优先使用 client_type 判断：1=用户发送，2=Agent回复
+     * 兜底使用 from 字段判断
      */
     fun isSentByMe(currentClientId: String): Boolean {
+        // 优先根据 client_type 判断方向
+        clientType?.let { return it == 1 }
+        // 兜底：根据 from 判断
         return from == currentClientId
     }
 
@@ -46,6 +58,34 @@ data class Message(
      */
     fun getStatusContent(): String? {
         return content.message ?: content.status
+    }
+
+    /**
+     * 获取显示内容 - 根据消息类型返回可读文本
+     */
+    fun getDisplayContent(): String {
+        return when (type) {
+            MessageType.TEXT -> content.text ?: ""
+            MessageType.STATUS -> {
+                val status = content.status ?: ""
+                val msg = content.message ?: ""
+                if (msg.isNotEmpty()) "$status: $msg" else status
+            }
+            MessageType.TOOL_CALL -> {
+                val toolName = content.toolName ?: ""
+                val params = content.parameters ?: ""
+                "🔧 $toolName\n$params"
+            }
+            MessageType.TOOL_RESULT -> {
+                val toolName = content.toolName ?: ""
+                val result = content.result ?: ""
+                "📋 $toolName\n$result"
+            }
+            MessageType.ERROR -> "❌ ${content.message ?: content.text ?: "未知错误"}"
+            MessageType.HEARTBEAT -> "💓 心跳"
+            MessageType.FILE -> "📁 ${content.name ?: "文件"}"
+            else -> content.text ?: ""
+        }
     }
 }
 
@@ -63,7 +103,28 @@ data class MessageContent(
     val message: String? = null,
 
     @SerializedName("timestamp")
-    val timestamp: Long? = null
+    val timestamp: Long? = null,
+
+    // 工具调用字段
+    @SerializedName("tool_name")
+    val toolName: String? = null,
+
+    @SerializedName("parameters")
+    val parameters: String? = null,
+
+    // 工具结果字段
+    @SerializedName("result")
+    val result: String? = null,
+
+    // 文件字段
+    @SerializedName("name")
+    val name: String? = null,
+
+    @SerializedName("size")
+    val size: Long? = null,
+
+    @SerializedName("content")
+    val fileContent: String? = null
 )
 
 /**

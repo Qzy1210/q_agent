@@ -2,6 +2,7 @@ package com.example.chatai.ui.viewmodel
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.chatai.ChatApplication
 import com.example.chatai.data.model.ConnectionState
 import com.example.chatai.data.model.Message
 import com.example.chatai.data.repository.ChatRepository
@@ -9,6 +10,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
 
 /**
  * 聊天页ViewModel
@@ -16,7 +18,8 @@ import kotlinx.coroutines.launch
  */
 class ChatViewModel : ViewModel() {
 
-    private val repository = ChatRepository(viewModelScope)
+    // 使用Application级别的共享Repository实例
+    private val repository: ChatRepository = ChatApplication.instance.repository
 
     // 消息列表
     private val _messages = MutableStateFlow<List<Message>>(emptyList())
@@ -40,7 +43,8 @@ class ChatViewModel : ViewModel() {
     private var currentSessionId: String? = null
 
     /**
-     * 连接WebSocket
+     * 连接WebSocket并加载历史消息
+     * 复用全局连接，如果已连接到相同session则不重新连接
      */
     fun connect(sessionId: String) {
         currentSessionId = sessionId
@@ -52,25 +56,38 @@ class ChatViewModel : ViewModel() {
             }
         }
 
-        // 监听消息
+        // 监听消息（合并策略，WebSocket消息会自动添加）
         viewModelScope.launch {
             repository.messages.collect { messages ->
                 _messages.value = messages
             }
         }
 
-        // 连接WebSocket
-        repository.connect(sessionId)
+        // 设置会话ID
+        repository.setSessionId(sessionId)
 
-        // 加载历史消息
-        loadMessages(sessionId)
+        // 如果未连接或连接到不同的session，则建立连接
+        if (!repository.isConnected()) {
+            repository.connect(sessionId)
+        }
+
+        // 延迟加载历史消息（等待WebSocket历史消息先到达）
+        // WebSocket连接后会自动发送历史消息，我们延迟500ms后再加载REST API消息
+        // 这样可以避免重复，并确保消息合并正确
+        viewModelScope.launch {
+            delay(500)
+            loadMessages(sessionId)
+        }
     }
 
     /**
      * 断开连接
+     * 注意：退出聊天页面时不断开全局连接，只在需要时才断开
      */
     fun disconnect() {
-        repository.disconnect()
+        // 不再调用 repository.disconnect()
+        // 全局连接由 Application 级别管理
+        // 只清空当前页面的消息列表
         repository.clearMessages()
     }
 

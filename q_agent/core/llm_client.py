@@ -14,10 +14,112 @@
 """
 
 import json
+import re
 import time
 from typing import Dict, Any, Optional, List
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+
+
+def repair_json(json_str: str) -> str:
+    """
+    修复 LLM 生成的损坏 JSON
+
+    常见问题：
+    1. 无效转义序列（如 \\以、\\*、\\@）
+    2. 未终止的字符串
+    3. 多余的逗号
+    4. 缺少引号
+
+    参数:
+        json_str: 可能损坏的 JSON 字符串
+
+    返回:
+        修复后的 JSON 字符串
+    """
+    if not json_str:
+        return json_str
+
+    result = json_str
+
+    # 1. 修复无效转义序列
+    # 有效转义: " \ / b f n r t u(XXXX)
+    result = re.sub(r'\\([^"\\/bfnrtu])', r'\\\\\1', result)
+
+    # 2. 修复未转义的换行符（字符串中的裸换行）
+    # 这个比较复杂，需要在字符串值内部替换
+    # 简单做法：在 "..." 内部，将裸换行替换为 \n
+
+    # 3. 移除尾部多余的逗号（如 ,] 或 ,}）
+    result = re.sub(r',\s*([}\]])', r'\1', result)
+
+    return result
+
+
+def safe_json_loads(json_str: str, max_retries: int = 2) -> tuple[Optional[Dict], Optional[str]]:
+    """
+    安全的 JSON 解析，带自动修复
+
+    参数:
+        json_str: JSON 字符串
+        max_retries: 最大修复重试次数
+
+    返回:
+        (解析后的字典, 错误信息)
+        成功时错误信息为 None
+    """
+    # 第一次尝试：直接解析
+    try:
+        return json.loads(json_str), None
+    except json.JSONDecodeError as e:
+        pass
+
+    # 尝试提取 JSON（处理 LLM 输出带有额外文本的情况）
+    extracted = extract_json(json_str)
+    if extracted and extracted != json_str:
+        try:
+            return json.loads(extracted), None
+        except json.JSONDecodeError:
+            pass
+
+    # 尝试修复后解析
+    for attempt in range(max_retries):
+        try:
+            fixed = repair_json(json_str if attempt == 0 else extracted)
+            return json.loads(fixed), None
+        except json.JSONDecodeError:
+            continue
+
+    return None, f"JSON 解析失败，尝试修复 {max_retries} 次后仍无效"
+
+
+def extract_json(text: str) -> Optional[str]:
+    """
+    从文本中提取 JSON
+
+    支持格式：
+    1. Markdown 代码块: ```json\\n{...}\\n```
+    2. 裸 JSON 对象: {...}
+    3. 裸 JSON 数组: [...]
+    """
+    # 尝试提取代码块
+    code_block = re.search(r'```(?:json)?\s*\n?([\s\S]*?)\n?```', text)
+    if code_block:
+        return code_block.group(1).strip()
+
+    # 尝试提取 JSON 对象
+    first_brace = text.find('{')
+    last_brace = text.rfind('}')
+    if first_brace != -1 and last_brace != -1 and last_brace > first_brace:
+        return text[first_brace:last_brace + 1]
+
+    # 尝试提取 JSON 数组
+    first_bracket = text.find('[')
+    last_bracket = text.rfind(']')
+    if first_bracket != -1 and last_bracket != -1 and last_bracket > first_bracket:
+        return text[first_bracket:last_bracket + 1]
+
+    return text
 
 
 @dataclass
@@ -111,7 +213,7 @@ class OpenAIClient(BaseLLMClient):
     支持 GPT-3.5、GPT-4 等模型
     文档：https://platform.openai.com/docs/api-reference
     """
-    
+
     def call(
         self,
         messages: List[Dict[str, str]],
@@ -119,28 +221,43 @@ class OpenAIClient(BaseLLMClient):
     ) -> LLMResponse:
         """
         调用OpenAI API
-        
+
         参数：
             messages: 消息列表
             **kwargs: 其他参数（如temperature、max_tokens等）
+
+        支持的结构化输出参数：
+            response_format: {"type": "json_object"} 或 {"type": "json_schema", "json_schema": {...}}
+
         返回：
             LLMResponse: 统一格式响应
         """
         try:
             import openai
-            
+
             # 创建客户端
             client = openai.OpenAI(api_key=self.api_key)
-            
+
+            # 构建请求参数
+            request_params = {
+                "model": self.model,
+                "messages": messages,
+                "temperature": kwargs.get("temperature", self.temperature),
+                "max_tokens": kwargs.get("max_tokens", self.max_tokens),
+            }
+
+            # 支持结构化输出 (response_format)
+            if "response_format" in kwargs:
+                request_params["response_format"] = kwargs["response_format"]
+
+            # 支持其他参数
+            for k in ["tools", "tool_choice", "seed"]:
+                if k in kwargs:
+                    request_params[k] = kwargs[k]
+
             # 调用API
-            response = client.chat.completions.create(
-                model=self.model,
-                messages=messages,
-                temperature=kwargs.get("temperature", self.temperature),
-                max_tokens=kwargs.get("max_tokens", self.max_tokens),
-                **{k: v for k, v in kwargs.items() if k not in ["temperature", "max_tokens"]}
-            )
-            
+            response = client.chat.completions.create(**request_params)
+
             # 构建响应
             return LLMResponse(
                 content=response.choices[0].message.content,
@@ -153,7 +270,7 @@ class OpenAIClient(BaseLLMClient):
                 provider="openai",
                 raw_response=response
             )
-            
+
         except ImportError:
             return self._build_error_response("openai package not installed. Run: pip install openai")
         except Exception as e:
@@ -535,9 +652,27 @@ class CustomClient(BaseLLMClient):
                 headers=headers,
                 json=data
             )
-            response.raise_for_status()
-            
-            result = response.json()
+
+            # 打印调试信息
+            print(f"📡 API响应状态码: {response.status_code}")
+            if self.config.get("debug", False):
+                print(f"📡 API响应头: {dict(response.headers)}")
+                print(f"📡 API响应内容(前500字符): {response.text[:500]}")
+
+            # 检查HTTP状态码
+            if response.status_code != 200:
+                error_msg = f"API返回错误状态码: {response.status_code}, 响应: {response.text[:500]}"
+                return self._build_error_response(error_msg)
+
+            # 检查响应内容是否为空
+            if not response.text or not response.text.strip():
+                return self._build_error_response("API返回空响应，请检查 base_url 是否正确")
+
+            # 解析JSON响应
+            try:
+                result = response.json()
+            except json.JSONDecodeError as e:
+                return self._build_error_response(f"API响应不是有效的JSON格式: {str(e)}, 响应内容: {response.text[:500]}")
             
             # 解析响应
             if self.response_parser:

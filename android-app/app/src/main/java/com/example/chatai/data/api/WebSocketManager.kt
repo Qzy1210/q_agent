@@ -1,5 +1,6 @@
 package com.example.chatai.data.api
 
+import android.util.Log
 import com.example.chatai.data.model.*
 import com.google.gson.Gson
 import kotlinx.coroutines.*
@@ -44,12 +45,15 @@ class WebSocketManager {
     val messageFlow: StateFlow<Message?> = _messageFlow
 
     companion object {
-        // Android模拟器访问本机地址
-        const val DEFAULT_URL = "ws://10.0.2.2:8080"
+        // 默认服务器地址
+        const val DEFAULT_URL = "ws://192.168.1.6:8088"
+        private const val TAG = "WebSocketManager"
     }
 
     /**
      * 初始化WebSocket
+     * @param scope 协程作用域
+     * @param serverUrl 服务器地址（可选，默认使用 DEFAULT_URL）
      */
     fun init(scope: CoroutineScope, serverUrl: String = DEFAULT_URL) {
         this.scope = scope
@@ -62,7 +66,28 @@ class WebSocketManager {
     }
 
     /**
+     * 设置服务器地址
+     */
+    fun setServerUrl(url: String) {
+        this.serverUrl = url
+        // 重新初始化 OkHttpClient
+        okHttpClient = OkHttpClient.Builder()
+            .pingInterval(30, TimeUnit.SECONDS)
+            .readTimeout(0, TimeUnit.MILLISECONDS)
+            .writeTimeout(10, TimeUnit.SECONDS)
+            .build()
+    }
+
+    /**
+     * 获取当前服务器地址
+     */
+    fun getServerUrl(): String = serverUrl
+
+    /**
      * 连接WebSocket
+     * @param clientId 客户端ID
+     * @param userId 用户ID
+     * @param sessionId 会话ID
      */
     fun connect(clientId: String, userId: String, sessionId: String) {
         this.clientId = clientId
@@ -76,38 +101,45 @@ class WebSocketManager {
         _connectionState.value = ConnectionState.connecting()
 
         val url = buildUrl()
+        Log.d(TAG, "Connecting to: $url")
+
         val request = Request.Builder()
             .url(url)
             .build()
 
         webSocket = okHttpClient?.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
+                Log.d(TAG, "WebSocket opened - connected!")
                 _connectionState.value = ConnectionState.connected()
                 reconnectAttempts = 0
                 startHeartbeat()
             }
 
             override fun onMessage(webSocket: WebSocket, text: String) {
+                Log.d(TAG, "Received message: $text")
                 try {
                     val message = gson.fromJson(text, Message::class.java)
                     handleMessage(message)
                 } catch (e: Exception) {
-                    // 解析失败，忽略
+                    Log.e(TAG, "Failed to parse message: ${e.message}")
                 }
             }
 
             override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
+                Log.d(TAG, "WebSocket closing: code=$code, reason=$reason")
                 _connectionState.value = ConnectionState.disconnected(reason)
                 stopHeartbeat()
             }
 
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+                Log.d(TAG, "WebSocket closed: code=$code, reason=$reason")
                 _connectionState.value = ConnectionState.disconnected(reason)
                 stopHeartbeat()
                 attemptReconnect()
             }
 
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+                Log.e(TAG, "WebSocket failure: ${t.message}")
                 _connectionState.value = ConnectionState.error(t)
                 stopHeartbeat()
                 attemptReconnect()
@@ -154,7 +186,8 @@ class WebSocketManager {
             from = clientId,
             sessionId = sessionId,
             timestamp = System.currentTimeMillis(),
-            content = MessageContent(text = text)
+            content = MessageContent(text = text),
+            clientType = 1 // 用户发送
         )
 
         return sendMessage(message)
@@ -256,7 +289,7 @@ class WebSocketManager {
      * 生成消息ID
      */
     private fun generateMessageId(): String {
-        return UUID.randomUUID().toString()
+        return "msg_${System.currentTimeMillis()}_${UUID.randomUUID().toString().take(4)}"
     }
 
     /**

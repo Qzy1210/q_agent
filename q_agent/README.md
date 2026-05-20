@@ -69,6 +69,14 @@ agent = Agent()
 
 # 执行任务
 result = agent.run("帮我创建一个名为test.txt的文件")
+
+# result 是 AgentResult 对象
+print(result.result)           # 最终结果文本
+print(result.success)          # 是否成功
+print(result.source)           # 来源: "skill" 或 "agent_loop"
+print(result.tools_called)     # 调用的工具列表
+
+# 也可以直接打印（等同于 result.result）
 print(result)
 ```
 
@@ -109,6 +117,19 @@ Agent通过工具与世界交互：
 - 文件操作（读写、搜索）
 - 代码辅助（搜索、重构）
 - 数据处理（格式转换、分析）
+
+### Skill 体系
+Agent 支持可插拔的 Skill 能力单元：
+- **list_skills** (`/skills`) - 列出所有已加载的 Skill
+- **code_review** (`/review`) - 审查代码质量
+- **summarize** (`/summarize`) - 总结文本内容
+
+### 执行结果
+Agent 返回 `AgentResult` 结构化对象：
+- `result` - 最终结果文本
+- `source` - 执行来源（skill / agent_loop / mcp）
+- `tools_called` - 工具调用轨迹
+- `to_dict()` - 转为字典用于 JSON 序列化
 
 ## 开发规范
 

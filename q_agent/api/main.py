@@ -33,14 +33,21 @@ async def lifespan(app: FastAPI):
     替代已弃用的 on_event，使用 lifespan 上下文管理器。
     """
     # 启动时执行
-    logger.info("Q-Agent API服务启动中...")
+    logger.info("=" * 50)
+    logger.info("Q-Agent API 服务启动中...")
+    logger.info(f"服务端口: 8089")
+    logger.info(f"API文档地址: http://localhost:8089/docs")
+    logger.info(f"ReDoc文档地址: http://localhost:8089/redoc")
+    logger.info("=" * 50)
     # TODO: 初始化Agent实例
     # TODO: 初始化数据库连接
 
     yield  # 服务运行中
 
     # 关闭时执行
-    logger.info("Q-Agent API服务关闭中...")
+    logger.info("=" * 50)
+    logger.info("Q-Agent API 服务关闭中...")
+    logger.info("=" * 50)
     # TODO: 清理资源
 
 
