@@ -565,10 +565,57 @@ class Agent:
         system_prompt = self._build_system_prompt()
         self.context_manager.add_message("system", system_prompt)
 
+        # 🔧 Bug修复: 从长期记忆恢复最近的对话历史到上下文
+        # 之前的问题：clear_context() 清空后不恢复历史，导致 LLM 完全"忘记"之前的对话
+        # 现在：从 Memory 中取最近的消息（排除当前任务），恢复到上下文窗口
+        self._restore_context_from_memory(exclude_task=task)
+
         # 添加用户任务到上下文
         self.context_manager.add_message("user", task)
 
         print(f"✅ 任务已初始化: {task[:50]}...")
+    
+    def _restore_context_from_memory(self, exclude_task: str = "", max_messages: int = 10):
+        """
+        🔧 从长期记忆恢复最近的对话历史到上下文窗口
+        
+        参数：
+            exclude_task (str): 要排除的消息内容（当前新任务，避免重复）
+            max_messages (int): 最多恢复的消息数量
+            
+        功能：
+        - 从 Memory 中取最近的对话历史
+        - 排除当前新任务（避免重复添加）
+        - 将历史消息恢复到 ContextManager 的上下文窗口中
+        - 这样 LLM 在 _think() 时能看到之前的对话
+        
+        修复的 Bug：
+        之前 clear_context() 后不恢复历史，导致每次 run() 时 LLM 都"失忆"
+        用户说"叫我大大大哥"后，再问"我叫什么"时 LLM 完全不知道
+        """
+        recent = self.memory.get_recent(count=max_messages + 1)  # +1 因为包含当前新任务
+        
+        restored_count = 0
+        for msg in recent:
+            content = msg.get("content", "")
+            role = msg.get("role", "")
+            
+            # 跳过当前新任务（避免重复）
+            if exclude_task and content == exclude_task and role == "user":
+                continue
+            
+            # 跳过系统提示（后面会重新添加）
+            if role == "system" and "你是" in content:
+                continue
+            
+            # 恢复到上下文
+            self.context_manager.add_message(role, content)
+            restored_count += 1
+        
+        if restored_count > 0:
+            print(f"🔄 已从记忆恢复 {restored_count} 条历史消息到上下文")
+        else:
+            print("ℹ️ 无历史消息需要恢复（首次对话）")
     
     def _should_continue(self) -> bool:
         """
