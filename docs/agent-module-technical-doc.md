@@ -246,15 +246,18 @@ def _should_continue(self) -> bool:
 
 `_build_system_prompt()` 是 Agent 能力的核心定义，包含：
 1. **角色定义**：`你是一个智能助手 {self.name}`
-2. **可用工具列表**：每个工具的名称、描述、参数定义（JSON Schema 格式）
-3. **工作流程**：分析 → 选工具 → 执行 → 继续/完成
-4. **完成规则**：何时返回 `finish`
-5. **输出格式**：严格的 JSON 格式要求 + 转义规则
+2. **可用工具列表**：遍历 `self.tools`，动态生成每个工具的名称、描述、参数定义（JSON Schema 格式）
+3. **可用高级能力（Skill）**：渐进式披露——仅注入 name + description 索引，按需加载完整 SOP
+4. **工作流程**：分析 → 选工具 → 执行 → 继续/完成
+5. **完成规则**：何时返回 `finish`
+6. **输出格式**：严格的 JSON 格式要求 + 转义规则
 
 ```python
 # 工具描述生成示例
 "- calculator: 执行数学计算\n  参数:\n    - expression (string)（必需）: 数学表达式字符串"
 ```
+
+> **注意**：工具列表是**动态构建**的。只要工具注册到 `self.tools`，系统提示词就会自动包含它们，**无需手动更新模板**。
 
 ---
 
@@ -445,11 +448,28 @@ class ToolRegistry:
 
 ### 7.3 内置工具
 
+#### 7.3.1 原有工具（3 个）
+
 | 工具 | 名称 | 功能 |
 |------|------|------|
 | FileReadTool | `file_read` | 读取文本文件（1MB 限制） |
 | CalculatorTool | `calculator` | 数学表达式计算（安全 eval） |
 | SearchTool | `search` | 文本关键词搜索 |
+
+#### 7.3.2 新增工具（10 个，2026-05-22）
+
+| 工具 | 名称 | 功能 | 优先级 |
+|------|------|------|--------|
+| FileWriteTool | `file_write` | 创建/写入文件，支持覆盖/追加模式，自动创建父目录 | 🔴 核心 |
+| FileEditTool | `file_edit` | 精确查找替换，唯一匹配检查 | 🔴 核心 |
+| ShellTool | `shell` | 执行 Shell 命令，超时控制，stdout/stderr 捕获 | 🔴 核心 |
+| FileListTool | `file_list` | 列出目录内容，支持递归和隐藏文件 | 🔴 核心 |
+| WebFetchTool | `web_fetch` | 抓取网页内容，编码处理，长度限制 | 🟡 增强 |
+| WebSearchTool | `web_search` | DuckDuckGo 搜索，返回标题+URL+摘要 | 🟡 增强 |
+| UrlFetchTool | `url_fetch` | 下载 URL 资源到本地，流式下载 | 🟡 增强 |
+| DateTimeTool | `date_time` | 获取当前时间，时区支持 | 🟢 辅助 |
+| ImageAnalyzeTool | `image_analyze` | Pillow 图片信息分析，无 Pillow 时 fallback | 🟢 辅助 |
+| MemorySaveTool | `memory_save` | JSON 持久化记忆，键值管理 | 🟢 辅助 |
 
 ### 7.4 工具返回格式
 

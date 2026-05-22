@@ -21,7 +21,22 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 
 from q_agent.core import Agent, Memory
 from q_agent.core import ContextManager
-from q_agent.tools import ToolRegistry, CalculatorTool, SearchTool
+from q_agent.tools import (
+    ToolRegistry,
+    CalculatorTool,
+    FileReadTool,
+    FileWriteTool,
+    FileEditTool,
+    FileListTool,
+    SearchTool,
+    ShellTool,
+    WebFetchTool,
+    WebSearchTool,
+    UrlFetchTool,
+    DateTimeTool,
+    ImageAnalyzeTool,
+    MemorySaveTool,
+)
 
 
 def create_simple_agent():
@@ -50,10 +65,21 @@ def create_simple_agent():
     # 创建工具注册器
     tool_registry = ToolRegistry()
     
-    # 注册工具
+    # 注册所有工具
     tool_registry.register(CalculatorTool())
+    tool_registry.register(FileReadTool())
+    tool_registry.register(FileWriteTool())
+    tool_registry.register(FileEditTool())
+    tool_registry.register(FileListTool())
     tool_registry.register(SearchTool())
-    print(f"✅ 工具注册完成: {tool_registry.get_tool_count()}")
+    tool_registry.register(ShellTool())
+    tool_registry.register(WebFetchTool())
+    tool_registry.register(WebSearchTool())
+    tool_registry.register(UrlFetchTool())
+    tool_registry.register(DateTimeTool())
+    tool_registry.register(ImageAnalyzeTool())
+    tool_registry.register(MemorySaveTool())
+    print(f"✅ 工具注册完成: {tool_registry.get_tool_count()} 个工具")
     
     # 创建Agent
     agent = Agent(

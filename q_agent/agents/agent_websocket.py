@@ -25,7 +25,22 @@ from q_agent.core.agent import Agent
 from q_agent.core.memory import Memory
 from q_agent.core.context import ContextManager
 from q_agent.core.llm_client import LLMClientFactory
-from q_agent.tools import ToolRegistry, CalculatorTool, FileReadTool, SearchTool
+from q_agent.tools import (
+    ToolRegistry,
+    CalculatorTool,
+    FileReadTool,
+    FileWriteTool,
+    FileEditTool,
+    FileListTool,
+    SearchTool,
+    ShellTool,
+    WebFetchTool,
+    WebSearchTool,
+    UrlFetchTool,
+    DateTimeTool,
+    ImageAnalyzeTool,
+    MemorySaveTool,
+)
 from q_agent.websocket_client import AgentWebSocketClient, run_agent_client
 
 # 配置日志
@@ -56,11 +71,21 @@ def create_agent(config: Config) -> Agent:
     memory = Memory()
     context_manager = ContextManager(max_tokens=max_tokens)
 
-    # 创建工具注册器并注册工具
+    # 创建工具注册器并注册所有工具
     tool_registry = ToolRegistry()
     tool_registry.register(CalculatorTool())
     tool_registry.register(FileReadTool())
+    tool_registry.register(FileWriteTool())
+    tool_registry.register(FileEditTool())
+    tool_registry.register(FileListTool())
     tool_registry.register(SearchTool())
+    tool_registry.register(ShellTool())
+    tool_registry.register(WebFetchTool())
+    tool_registry.register(WebSearchTool())
+    tool_registry.register(UrlFetchTool())
+    tool_registry.register(DateTimeTool())
+    tool_registry.register(ImageAnalyzeTool())
+    tool_registry.register(MemorySaveTool())
 
     # 从配置创建LLM客户端
     llm_client = None

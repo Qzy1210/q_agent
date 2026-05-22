@@ -57,7 +57,39 @@
 
 ---
 
-## [2025-05-19] AgentResult 与工具调用轨迹
+## [2026-05-22] 基础工具扩展：新增 10 个高频工具
+
+### 新增工具（10 个）
+
+| 工具 | 名称 | 功能 |
+|------|------|------|
+| 文件写入 | `file_write` | 创建/写入文件，支持覆盖/追加模式，自动创建父目录 |
+| 文件编辑 | `file_edit` | 精确查找替换，唯一匹配检查 |
+| Shell 执行 | `shell` | 执行 Shell 命令，超时控制，stdout/stderr 捕获 |
+| 目录列表 | `file_list` | 列出目录内容，支持递归和隐藏文件 |
+| 网页抓取 | `web_fetch` | 抓取网页内容，编码处理，长度限制 |
+| 网络搜索 | `web_search` | DuckDuckGo 搜索，返回标题+URL+摘要 |
+| 资源下载 | `url_fetch` | 下载 URL 资源到本地，流式下载 |
+| 日期时间 | `date_time` | 获取当前时间，时区支持 |
+| 图片分析 | `image_analyze` | Pillow 图片信息分析，无 Pillow 时 fallback |
+| 记忆存储 | `memory_save` | JSON 持久化记忆，键值管理 |
+
+### 修改文件
+
+| 文件 | 修改内容 |
+|------|----------|
+| `q_agent/tools/basic_tools.py` | 新增 10 个工具类实现（+1475 行） |
+| `q_agent/tools/__init__.py` | 导出全部 13 个工具 |
+| `q_agent/agents/agent_websocket.py` | 注册全部 13 个工具到 tool_registry |
+| `q_agent/agents/simple_agent.py` | 注册全部 13 个工具到 tool_registry |
+
+### 系统提示词机制
+
+`_build_system_prompt()` 动态遍历 `self.tools` 生成 `{tools_text}`，**新工具注册后自动出现在系统提示词中**，无需手动更新模板。
+
+---
+
+## [2026-05-22] 渐进式 Skill 披露 + Agent Loop 自主决策
 
 ### 新增功能
 
