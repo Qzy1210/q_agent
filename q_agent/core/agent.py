@@ -1144,13 +1144,13 @@ class Agent:
             # 记录token使用
             if response.usage:
                 print(f"📊 Token使用: {response.usage}")
-                # 保存到记忆中（可选）
-                self.memory.save_message(
-                    "system",
-                    f"Token使用: {response.usage['total_tokens']} "
-                    f"(prompt: {response.usage['prompt_tokens']}, "
-                    f"completion: {response.usage['completion_tokens']})"
-                )
+                # 保存到记忆中（可选） 为什么要把token保存的消息中？
+                # self.memory.save_message(
+                #     "system",
+                #     f"Token使用: {response.usage['total_tokens']} "
+                #     f"(prompt: {response.usage['prompt_tokens']}, "
+                #     f"completion: {response.usage['completion_tokens']})"
+                # )
 
             # 检查响应内容是否为空
             if not response.content or not response.content.strip():
