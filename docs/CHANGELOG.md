@@ -1,5 +1,62 @@
 # q_agent 更新日志
 
+## [2026-05-22] 渐进式 Skill 披露 + Agent Loop 自主决策
+
+### 架构变更：从"Router 前置路由"升级为"LLM 自主决策"
+
+#### 问题
+
+原有设计中，Skill 执行完全绕过 LLM：
+- `SkillRouter.route()` 在 `run()` 入口处做关键词/语义匹配
+- 匹配成功 → 直接执行 Skill SOP（LLM 被排除）
+- 匹配失败 → 进入 Agent Loop（但 LLM 不知道 Skill 的存在）
+
+**LLM 的能力感知和系统实际能力之间存在断层。**
+
+#### 解决方案：渐进式披露（Progressive Disclosure）
+
+```
+用户输入
+    ↓
+┌─ 以 / 开头？─ 是 → Router 匹配 → 直接执行 Skill（快速通道，保留）
+│
+否 → Agent Loop（LLM 思考）
+         ↓
+    LLM 看到系统提示词中的:
+    - 基础工具列表 (file_read, calculator, search)
+    - Skill 索引 (仅 name + description)
+         ↓
+    LLM 自主决策:
+    ├─ action="file_read" → 执行工具
+    ├─ action="use_skill", skill_name="code-review" → 加载完整 SOP → 执行
+    └─ action="finish" → 返回结果
+```
+
+### 具体改动
+
+| 改动 | 说明 |
+|------|------|
+| **新增 `_build_skill_index_text()`** | 构建轻量 Skill 索引，仅暴露 name + description |
+| **修改 `_build_system_prompt()`** | 末尾追加 Skill 索引，LLM 可见可用高级能力 |
+| **修改 `_act()` 方法** | 新增 `use_skill` 动作处理，按需加载完整 SOP |
+| **修改 `run()` 入口逻辑** | `/command` 保留快速通道，普通意图走 Agent Loop |
+
+### 系统提示词优化
+
+- 重构为 Markdown 分级结构（角色 → 核心原则 → 工作流 → 工具 → 输出格式 → 示例）
+- 新增完成判断标准（✅/❌ 对照表）
+- 示例从 1 个增加到 3 个（计算/文件/多步骤）
+
+### 修改文件
+
+| 文件 | 修改内容 |
+|------|----------|
+| `q_agent/core/agent.py` | 新增 `_build_skill_index_text()`；修改 `_build_system_prompt()`；修改 `_act()` 支持 `use_skill`；修改 `run()` 入口逻辑 |
+| `docs/skill_design.md` | 新增渐进式披露架构说明，更新 Agent 集成章节 |
+| `docs/agent-module-technical-doc.md` | 更新 Agent Loop 和 Skill 系统章节 |
+
+---
+
 ## [2025-05-19] AgentResult 与工具调用轨迹
 
 ### 新增功能

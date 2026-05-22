@@ -377,6 +377,34 @@ class SkillContext:
 
 ## 五、Agent 集成
 
+### 5.0 渐进式披露架构（v1.1 新增）
+
+> **核心理念**：让 LLM 掌握全局能力视图，由 LLM 自主决定是否调用 Skill。
+
+#### 问题背景
+
+原有设计中，Skill 执行完全绕过 LLM：
+- `SkillRouter.route()` 在入口处做关键词匹配
+- 匹配成功 → 直接执行 Skill SOP（LLM 被排除）
+- 匹配失败 → 进入 Agent Loop（但 LLM 不知道 Skill 的存在）
+
+**LLM 的能力感知和系统实际能力之间存在断层。**
+
+#### 渐进式披露方案
+
+```
+系统提示词中只暴露: <name> + <description>
+          ↓
+   LLM 判断是否需要使用 Skill
+          ↓
+   action="use_skill" → 按需加载完整 SOP
+```
+
+**优势**：
+- ✅ LLM 掌握全局能力视图，可以自主组合工具和 Skill
+- ✅ 渐进式加载，不占用上下文窗口（先索引，再按需加载完整 SOP）
+- ✅ 保留 `/command` 快速通道，满足确定性场景
+
 ### 5.1 执行结果类型
 
 Agent 执行后返回 `AgentResult` 对象，包含完整的执行信息：
@@ -459,15 +487,14 @@ def run(self, user_input: str) -> AgentResult:
     self._tools_called = []
     self.iteration_count = 0
 
-    # 1. 尝试路由到 Skill
-    skill, cleaned_input, confidence = self.skill_router.route(user_input)
-
-    if skill and confidence > 0:
-        # 2. 执行 Skill
-        context = self._build_skill_context(user_input)
-        result = self.skill_executor.execute(skill, cleaned_input, context)
-
-        if result.success:
+    # 1. 仅处理显式命令调用（/ 开头），普通意图交给 LLM 自主决策
+    if user_input.startswith('/'):
+        skill, cleaned_input, confidence = self.skill_router.route(user_input)
+        if skill and confidence == 1.0:  # 仅命令匹配才走快速通道
+            # 2. 执行 Skill（快速通道）
+            context = self._build_skill_context(cleaned_input)
+            result = self.skill_executor.execute(skill, context)
+            
             return AgentResult(
                 result=self._format_output(result),
                 success=True,
@@ -475,17 +502,42 @@ def run(self, user_input: str) -> AgentResult:
                 skill_name=skill.meta.name,
                 tools_called=self._tools_called
             )
-        else:
-            return AgentResult(
-                result=f"Skill 执行失败: {result.error}",
-                success=False,
-                source="skill",
-                skill_name=skill.meta.name,
-                error=result.error
-            )
 
-    # 3. 无匹配 Skill，走普通 Agent Loop
+    # 3. 普通意图 → Agent Loop（LLM 自主决策）
     return self._run_agent_loop(user_input)
+```
+
+#### `_act()` 中的 `use_skill` 处理
+
+```python
+def _act(self, action: AgentAction) -> str:
+    """执行工具或 Skill"""
+    
+    # 检查是否是 use_skill 动作（渐进式 Skill 调用）
+    if action.tool_name == 'use_skill':
+        skill_name = action.parameters.get('skill_name')
+        skill_input = action.parameters.get('skill_input', '')
+        
+        # 查找 Skill
+        skill = self.skill_registry.get(skill_name)
+        if not skill:
+            return f"❌ 找不到名为 '{skill_name}' 的 Skill"
+        
+        # 按需加载完整 SOP 并执行
+        context = SkillContext(
+            tool_registry=self.tools,
+            llm_client=self.llm_client,
+            memory=self.memory,
+            context_manager=self.context_manager,
+            user_input=skill_input
+        )
+        
+        result = self.skill_executor.execute(skill, context)
+        self._tools_called.append(f"skill:{skill_name}")
+        
+        return self._format_skill_result(result)
+    
+    # 普通工具执行...
 ```
 
 ### 5.4 工具调用记录

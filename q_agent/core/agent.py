@@ -440,52 +440,52 @@ class Agent:
         self._tools_called = []
         self.iteration_count = 0
 
-        # 尝试路由到 Skill
-        skill, cleaned_input, confidence = self.skill_router.route(task)
+        # 仅处理显式命令调用（/ 开头），普通意图交给 LLM 自主决策
+        if task.startswith('/'):
+            skill, cleaned_input, confidence = self.skill_router.route(task)
+            if skill and confidence == 1.0:  # 仅命令匹配才走快速通道
+                print(f"🎯 匹配到 Skill: {skill.meta.name} (置信度: {confidence:.2f})")
 
-        if skill and confidence > 0:
-            print(f"🎯 匹配到 Skill: {skill.meta.name} (置信度: {confidence:.2f})")
-
-            # 构建 Skill 执行上下文
-            context = SkillContext(
-                tool_registry=self.tools,
-                llm_client=self.llm_client,
-                memory=self.memory,
-                context_manager=self.context_manager,
-                user_input=task
-            )
-
-            # 执行 Skill
-            result = self.skill_executor.execute(skill, cleaned_input, context)
-
-            if result.success:
-                # 将 Skill 执行轨迹中的工具调用转为 ToolCall
-                for trace_item in result.execution_trace:
-                    if trace_item.get("step") == "tool_call":
-                        self._tools_called.append(ToolCall(
-                            tool_name=trace_item.get("tool", ""),
-                            parameters={},
-                            result=str(trace_item.get("success", "")),
-                            success=trace_item.get("success", False)
-                        ))
-
-                return AgentResult(
-                    result=self._format_skill_result(result),
-                    success=True,
-                    source="skill",
-                    skill_name=skill.meta.name,
-                    tools_called=self._tools_called
-                )
-            else:
-                return AgentResult(
-                    result=f"Skill 执行失败: {result.error}",
-                    success=False,
-                    source="skill",
-                    skill_name=skill.meta.name,
-                    error=result.error or ""
+                # 构建 Skill 执行上下文
+                context = SkillContext(
+                    tool_registry=self.tools,
+                    llm_client=self.llm_client,
+                    memory=self.memory,
+                    context_manager=self.context_manager,
+                    user_input=cleaned_input
                 )
 
-        # 无匹配 Skill，走普通 Agent Loop
+                # 执行 Skill
+                result = self.skill_executor.execute(skill, context)
+
+                if result.success:
+                    # 将 Skill 执行轨迹中的工具调用转为 ToolCall
+                    for trace_item in result.execution_trace:
+                        if trace_item.get("step") == "tool_call":
+                            self._tools_called.append(ToolCall(
+                                tool_name=trace_item.get("tool", ""),
+                                parameters={},
+                                result=str(trace_item.get("success", "")),
+                                success=trace_item.get("success", False)
+                            ))
+
+                    return AgentResult(
+                        result=self._format_skill_result(result),
+                        success=True,
+                        source="skill",
+                        skill_name=skill.meta.name,
+                        tools_called=self._tools_called
+                    )
+                else:
+                    return AgentResult(
+                        result=f"Skill 执行失败: {result.error}",
+                        success=False,
+                        source="skill",
+                        skill_name=skill.meta.name,
+                        error=result.error or ""
+                    )
+
+        # 无匹配 Skill 或非显式命令，走普通 Agent Loop
         return self._run_agent_loop(task)
 
     def _run_agent_loop(self, task: str) -> AgentResult:
@@ -720,6 +720,44 @@ class Agent:
         - 日志记录：记录所有工具调用
         - 结果格式化：统一结果格式
         """
+        # 检查是否是 use_skill 动作（渐进式 Skill 调用）
+        if action.tool_name == 'use_skill':
+            skill_name = action.parameters.get('skill_name')
+            skill_input = action.parameters.get('skill_input', '')
+
+            print(f"🎯 LLM 选择使用 Skill: {skill_name}")
+
+            # 查找 Skill
+            skill = self.skill_registry.get(skill_name)
+            if not skill:
+                available = ', '.join(self.skill_registry.get_skill_names())
+                return f"❌ 找不到名为 '{skill_name}' 的 Skill。可用 Skill: {available}"
+
+            print(f"📖 正在加载完整 SOP: {skill.meta.name}")
+
+            # 构建 Skill 执行上下文
+            context = SkillContext(
+                tool_registry=self.tools,
+                llm_client=self.llm_client,
+                memory=self.memory,
+                context_manager=self.context_manager,
+                user_input=skill_input
+            )
+
+            # 执行 Skill
+            result = self.skill_executor.execute(skill, context)
+
+            # 记录执行
+            self._tools_called.append(ToolCall(
+                tool_name=f"skill:{skill_name}",
+                parameters=action.parameters,
+                result=str(result.result) if result.success else result.error or "",
+                reasoning=action.reasoning,
+                success=result.success
+            ))
+
+            return self._format_skill_result(result)
+
         print(f"🔧 执行工具: {action.tool_name}")
         print(f"📝 参数: {action.parameters}")
         print(f"💭 理由: {action.reasoning}")
@@ -826,6 +864,41 @@ class Agent:
         # 注意：不在工具执行后判断任务完成
         # 任务完成由LLM决定，在_parse_response_to_action中处理action="finish"
     
+    def _build_skill_index_text(self) -> str:
+        """
+        构建轻量 Skill 索引（渐进式披露 - 仅 name + description）
+
+        返回:
+            str: 格式化的 Skill 索引文本
+        """
+        skills = self.skill_registry.get_all(enabled_only=True)
+        if not skills:
+            return ''
+
+        lines = ['---', '', '# 可用高级能力（Skill）', '']
+        lines.append('除基础工具外，你还可以调用以下预定义的高级能力。')
+        lines.append('当用户请求匹配某个 Skill 的描述时，使用 action="use_skill" 来调用。')
+        lines.append('**注意：一次只能调用一个工具或一个 Skill。**')
+        lines.append('')
+
+        for skill in skills:
+            desc = skill.meta.description or '暂无描述'
+            lines.append(f'- **{skill.meta.name}**: {desc}')
+
+        lines.extend([
+            '',
+            '**调用方式**：',
+            '在 JSON 中使用 action="use_skill"，parameters 格式如下：',
+            '{"skill_name": "Skill名称", "skill_input": "用户原始输入或具体需求"}',
+            '',
+            '**关键规则**：',
+            '- 仅当用户请求明确匹配某个 Skill 的功能时才使用 use_skill',
+            '- skill_name 必须是上述列表中的名称（精确匹配）',
+            '- skill_input 应包含用户的具体需求，帮助 Skill 执行器理解任务',
+        ])
+
+        return '\n'.join(lines)
+
     def _build_system_prompt(self) -> str:
         """
         构建系统提示
@@ -879,52 +952,112 @@ class Agent:
 
         tools_text = "\n\n".join(tool_descriptions) if tool_descriptions else "暂无可用工具"
 
-        system_prompt = f"""你是一个智能助手 {self.name}。
+        # ====== 角色定义 ======
+        system_prompt = f"""# 角色
 
-你的职责是帮助用户完成任务。你会使用工具来解决问题。
+你是 {self.name}，一个智能 AI 助手。你的目标是通过调用可用工具来帮助用户完成任务。
 
-可用工具：
+---
+
+# 核心原则
+
+1. **直接高效**：用最少的步骤完成任务，避免冗余操作
+2. **结果导向**：当工具返回的结果已完整回答问题时，立即返回 finish，不再调用额外工具
+3. **安全可靠**：严格按照工具参数定义调用，不传入未定义的参数
+4. **诚实透明**：在 thinking 中展示你的推理过程，让用户了解决策依据
+
+---
+
+# 工作流程
+
+```
+收到任务 → 分析需求 → 选择工具 → 执行工具 → 观察结果 → 判断是否完成
+                                                    ↓ 否
+                                              继续选择工具
+                                                    ↓ 是
+                                             返回 action="finish"
+```
+
+**关键判断标准**：
+- ✅ 工具结果已直接回答了用户问题 → **立即 finish**
+- ✅ 已获得用户所需的全部信息 → **立即 finish**
+- ❌ 还在收集信息、还在处理中间步骤 → **继续调用工具**
+
+---
+
+# 可用工具
+
 {tools_text}
 
-工作流程：
-1. 分析用户任务
-2. 选择合适的工具
-3. 执行工具并观察结果
-4. 继续下一步或完成任务
+**工具调用规则**：
+- 只使用上述列表中存在的工具
+- 参数必须符合工具定义中的类型和要求
+- 必需参数（必需）必须提供，可选参数可按需提供
+- 一次只能调用一个工具
 
-【重要规则】何时完成任务：
-- 当工具执行的结果已经完整回答了用户的问题时，必须返回 action="finish"
-- 当你已经获得了用户需要的答案时，必须返回 action="finish"
-- 绝对不要重复执行相同的工具调用
-- 如果上一步工具调用已经解决了问题，直接返回 finish，不要再调用任何工具
+---
 
-【finish 的使用示例】：
-用户问: "15*16等于多少"
-你调用 calculator 得到结果 240
-此时问题已解决，必须返回: {{"action": "finish", "parameters": {{"result": "15*16=240"}}}}
+# 输出格式（严格 JSON）
 
-输出格式要求（严格JSON）：
+每次回复必须输出且仅输出以下 JSON 格式，不要输出任何 JSON 之外的内容：
+
+```json
 {{
-    "thinking": "你的思考过程",
-    "action": "工具名称 或 finish（完成任务）",
-    "parameters": {{根据action不同，参数格式不同（见工具定义）}},
-    "reasoning": "选择这个行动的理由"
+    "thinking": "你的思考过程：分析当前状态、为什么选择下一步",
+    "action": "工具名称 或 finish",
+    "parameters": {{}},
+    "reasoning": "选择这个行动的简要理由"
 }}
+```
 
-【JSON格式严格规则】：
-1. 必须输出有效的JSON格式，不要输出任何JSON之外的内容
-2. 字符串中的特殊字符必须正确转义：
-   - 换行符使用 \\n
-   - 反斜杠使用 \\\\
-   - 双引号使用 \\"
-   - 制表符使用 \\t
-3. 不要在字符串中使用无效转义序列（如 \\以、\\*、\\@ 等）
-4. 如果内容包含特殊字符，确保转义后是有效的JSON
-5. action为"finish"时，parameters格式为：{{"result": "最终答案"}}
-6. action为工具名称时，parameters必须按照该工具的参数定义提供
+**action 取值规则**：
+- `"action": "工具名称"`：需要调用工具时使用，parameters 按该工具的参数定义填写
+- `"action": "finish"`：任务完成时使用，parameters 必须为 `{{"result": "最终答案"}}`
 
-请严格遵循以上规则，确保输出的是可以被标准JSON解析器解析的有效JSON。
+---
+
+# JSON 格式规范
+
+1. **必须是有效的 JSON**，不要输出 markdown 代码块或其他包裹格式
+2. **字符串转义**：换行用 `\\n`，双引号用 `\\"`，反斜杠用 `\\\\`，制表符用 `\\t`
+3. **禁止无效转义**：不要在字符串中使用 `\\以`、`\\*`、`\\@` 等无效转义序列
+4. **finish 格式**：action 为 finish 时，parameters 必须是 `{{"result": "最终答案文本"}}`
+
+---
+
+# 示例
+
+**示例 1：数学计算**
+```
+用户：15*16等于多少
+你调用：calculator(expression="15*16") → 返回 240
+你返回：{{"thinking": "计算已完成，结果为240", "action": "finish", "parameters": {{"result": "15*16=240"}}, "reasoning": "计算器已给出准确结果"}}
+```
+
+**示例 2：文件读取**
+```
+用户：读取 config.json 的内容
+你调用：file_read(file_path="config.json") → 返回文件内容
+你返回：{{"thinking": "文件内容已获取", "action": "finish", "parameters": {{"result": "文件内容如下：..." }}, "reasoning": "文件读取成功，内容已完整返回"}}
+```
+
+**示例 3：多步骤任务**
+```
+用户：读取文件并统计行数
+第一轮：{{"thinking": "需要先读取文件内容", "action": "file_read", "parameters": {{"file_path": "data.txt"}}, "reasoning": "获取文件内容后才能统计行数"}}
+观察结果：文件内容有100行
+第二轮：{{"thinking": "已获取文件内容，可以统计行数", "action": "finish", "parameters": {{"result": "文件共有100行"}}, "reasoning": "已从文件内容中统计出行数"}}
+```
+
+---
+
+请严格遵循以上规则，确保每次输出都是有效的 JSON。
 """
+        # 注入 Skill 索引（渐进式披露 - 只展示名称和描述，SOP 按需加载）
+        skill_index = self._build_skill_index_text()
+        if skill_index:
+            system_prompt += '\n\n' + skill_index
+
         return system_prompt
     
     def _call_llm(self, messages: List[Dict[str, str]], use_structured_output: bool = True) -> str:
