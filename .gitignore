@@ -44,6 +44,7 @@ logs/
 
 # Config with secrets
 config.json
+config.test.json
 
 # OS
 .DS_Store
